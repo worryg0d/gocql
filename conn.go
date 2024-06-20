@@ -600,17 +600,27 @@ func (c *Conn) Close() {
 func (c *Conn) serve(ctx context.Context) {
 	var err error
 	for err == nil {
-		err = c.recv(ctx)
+		// If native proto v5+ is used and conn is set up, then we should
+		// unwrap payload body from v5 compressed/uncompressed frame
+		if c.version > protoVersion4 && c.connReady {
+			err = c.recvV5Frame(ctx)
+		} else {
+			err = c.recv(ctx)
+		}
 	}
 
 	c.closeWithError(err)
 }
 
 func (c *Conn) recvV5Frame(ctx context.Context) error {
-	var payload []byte
-	var isSelfContained bool
-	var err error
+	const frameHeaderLength = 9
+	var (
+		payload         []byte
+		isSelfContained bool
+		err             error
+	)
 
+	// Read frame based on compression
 	if c.compressor != nil {
 		payload, isSelfContained, err = readCompressedFrame(c.r, c.compressor)
 	} else {
@@ -633,7 +643,7 @@ func (c *Conn) recvV5Frame(ctx context.Context) error {
 	buf := bytes.NewBuffer(make([]byte, 0, head.length+9))
 	buf.Write(payload)
 
-	// computing how many bytes of message left to read
+	// Computing how many bytes of message left to read
 	bytesToRead := head.length - len(payload) + 9
 
 	err = c.recvLastsEnvelops(buf, bytesToRead)
@@ -1850,6 +1860,7 @@ func (c *Conn) recvLastsEnvelops(dst *bytes.Buffer, bytesToRead int) error {
 	var segment []byte
 	var err error
 	for read != bytesToRead {
+		// Read frame based on compression
 		if c.compressor != nil {
 			segment, _, err = readCompressedFrame(c.r, c.compressor)
 		} else {
@@ -1859,6 +1870,7 @@ func (c *Conn) recvLastsEnvelops(dst *bytes.Buffer, bytesToRead int) error {
 			return fmt.Errorf("gocql: failed to read non self-contained frame: %w", err)
 		}
 
+		// Write the segment to the destination writer
 		n, _ := dst.Write(segment)
 		read += n
 	}

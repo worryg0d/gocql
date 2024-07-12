@@ -172,14 +172,15 @@ const (
 	flagNoMetaData      int = 0x04
 
 	// query flags
-	flagValues                byte = 0x01
-	flagSkipMetaData          byte = 0x02
-	flagPageSize              byte = 0x04
-	flagWithPagingState       byte = 0x08
-	flagWithSerialConsistency byte = 0x10
-	flagDefaultTimestamp      byte = 0x20
-	flagWithNameValues        byte = 0x40
-	flagWithKeyspace          byte = 0x80
+	flagValues                byte   = 0x01
+	flagSkipMetaData          byte   = 0x02
+	flagPageSize              byte   = 0x04
+	flagWithPagingState       byte   = 0x08
+	flagWithSerialConsistency byte   = 0x10
+	flagDefaultTimestamp      byte   = 0x20
+	flagWithNameValues        byte   = 0x40
+	flagWithKeyspace          byte   = 0x80
+	flagWithTimeInSeconds     uint16 = 0x100
 
 	// prepare flags
 	flagWithPreparedKeyspace uint32 = 0x01
@@ -1674,6 +1675,9 @@ type writeBatchFrame struct {
 
 	//v4+
 	customPayload map[string][]byte
+
+	//v5+
+	keyspace string
 }
 
 func (w *writeBatchFrame) buildFrame(framer *framer, streamID int) error {
@@ -1734,7 +1738,11 @@ func (f *framer) writeBatchFrame(streamID int, w *writeBatchFrame, customPayload
 		}
 
 		if f.proto > protoVersion4 {
-			f.writeUint(uint32(flags))
+			flags := uint32(flags)
+			if w.keyspace != "" {
+				flags |= uint32(flagWithKeyspace)
+			}
+			f.writeUint(flags)
 		} else {
 			f.writeByte(flags)
 		}
@@ -1751,6 +1759,13 @@ func (f *framer) writeBatchFrame(streamID int, w *writeBatchFrame, customPayload
 				ts = time.Now().UnixNano() / 1000
 			}
 			f.writeLong(ts)
+		}
+
+		if w.keyspace != "" {
+			if f.proto < protoVersion5 {
+				panic(fmt.Errorf("the keyspace can only be set with protocol 5 or higher"))
+			}
+			f.writeString(w.keyspace)
 		}
 	}
 

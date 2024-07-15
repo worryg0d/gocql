@@ -936,6 +936,9 @@ type Query struct {
 
 	// routingInfo is a pointer because Query can be copied and copyable struct can't hold a mutex.
 	routingInfo *queryRoutingInfo
+
+	nowInSeconds      bool
+	nowInSecondsValue int32
 }
 
 type queryRoutingInfo struct {
@@ -1423,6 +1426,27 @@ func (q *Query) releaseAfterExecution() {
 	q.decRefCount()
 }
 
+// NowInSeconds will enable the with now_in_seconds flag on the query.
+// Affects TTL cell liveness in read queries and local deletion
+// time for tombstones and TTL cells in update requests. It's intended
+// for testing purposes and is optional
+//
+// Only available on protocol >= 5
+func (q *Query) NowInSeconds(enable bool) *Query {
+	q.nowInSeconds = enable
+	return q
+}
+
+// WithNowInSeconds will enable the with now_in_seconds flag on the query
+// like NowInSeconds. Also, it allows to define now_in_seconds value.
+//
+// Only available on protocol >= 5
+func (q *Query) WithNowInSeconds(now int32) *Query {
+	q.NowInSeconds(true)
+	q.nowInSecondsValue = now
+	return q
+}
+
 // Iter represents an iterator that can be used to iterate over all rows that
 // were returned by a query. The iterator might send additional queries to the
 // database during the iteration if paging was enabled.
@@ -1742,6 +1766,8 @@ type Batch struct {
 	cancelBatch           func()
 	keyspace              string
 	metrics               *queryMetrics
+	nowInSeconds          bool
+	nowInSecondsValue     int32
 
 	// routingInfo is a pointer because Query can be copied and copyable struct can't hold a mutex.
 	routingInfo *queryRoutingInfo
@@ -2040,6 +2066,27 @@ func (b *Batch) borrowForExecution() {
 func (b *Batch) releaseAfterExecution() {
 	// empty, because Batch has no equivalent of Query.Release()
 	// that would race with speculative executions.
+}
+
+// NowInSeconds will enable the with now_in_seconds flag on the query.
+// Affects TTL cell liveness in read queries and local deletion
+// time for tombstones and TTL cells in update requests. It's intended
+// for testing purposes and is optional
+//
+// Only available on protocol >= 5
+func (b *Batch) NowInSeconds(enable bool) *Batch {
+	b.nowInSeconds = enable
+	return b
+}
+
+// WithNowInSeconds will enable the with now_in_seconds flag on the query
+// like NowInSeconds. Also, it allows to define now_in_seconds value.
+//
+// Only available on protocol >= 5
+func (b *Batch) WithNowInSeconds(now int32) *Batch {
+	b.NowInSeconds(true)
+	b.nowInSecondsValue = now
+	return b
 }
 
 type BatchType byte

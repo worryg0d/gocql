@@ -180,7 +180,7 @@ const (
 	flagDefaultTimestamp      byte   = 0x20
 	flagWithNameValues        byte   = 0x40
 	flagWithKeyspace          byte   = 0x80
-	flagWithTimeInSeconds     uint16 = 0x100
+	flagWithNowInSeconds      uint16 = 0x100
 
 	// prepare flags
 	flagWithPreparedKeyspace uint32 = 0x01
@@ -1467,7 +1467,9 @@ type queryParams struct {
 	defaultTimestamp      bool
 	defaultTimestampValue int64
 	// v5+
-	keyspace string
+	keyspace          string
+	nowInSeconds      bool
+	nowInSecondsValue int32
 }
 
 func (q queryParams) String() string {
@@ -1522,7 +1524,13 @@ func (f *framer) writeQueryParams(opts *queryParams) {
 	}
 
 	if f.proto > protoVersion4 {
-		f.writeUint(uint32(flags))
+		flags := uint32(flags)
+
+		if opts.nowInSeconds {
+			flags |= uint32(flagWithNowInSeconds)
+		}
+
+		f.writeUint(flags)
 	} else {
 		f.writeByte(flags)
 	}
@@ -1560,13 +1568,24 @@ func (f *framer) writeQueryParams(opts *queryParams) {
 		if opts.defaultTimestampValue != 0 {
 			ts = opts.defaultTimestampValue
 		} else {
-			ts = time.Now().UnixNano() / 1000
+			ts = time.Now().UnixNano() / 1e6
 		}
 		f.writeLong(ts)
 	}
 
 	if opts.keyspace != "" {
 		f.writeString(opts.keyspace)
+	}
+
+	if f.proto > protoVersion4 && opts.nowInSeconds {
+		// now timestamp in seconds
+		var ts int32
+		if opts.nowInSecondsValue != 0 {
+			ts = opts.nowInSecondsValue
+		} else {
+			ts = int32(time.Now().UnixMicro() / 1000)
+		}
+		f.writeInt(ts)
 	}
 }
 
@@ -1677,7 +1696,9 @@ type writeBatchFrame struct {
 	customPayload map[string][]byte
 
 	//v5+
-	keyspace string
+	keyspace          string
+	nowInSeconds      bool
+	nowInSecondsValue int32
 }
 
 func (w *writeBatchFrame) buildFrame(framer *framer, streamID int) error {
@@ -1742,6 +1763,11 @@ func (f *framer) writeBatchFrame(streamID int, w *writeBatchFrame, customPayload
 			if w.keyspace != "" {
 				flags |= uint32(flagWithKeyspace)
 			}
+
+			if w.nowInSeconds {
+				flags |= uint32(flagWithNowInSeconds)
+			}
+
 			f.writeUint(flags)
 		} else {
 			f.writeByte(flags)
@@ -1766,6 +1792,17 @@ func (f *framer) writeBatchFrame(streamID int, w *writeBatchFrame, customPayload
 				panic(fmt.Errorf("the keyspace can only be set with protocol 5 or higher"))
 			}
 			f.writeString(w.keyspace)
+		}
+
+		if f.proto > protoVersion4 && w.nowInSeconds {
+			// now timestamp in seconds
+			var ts int32
+			if w.nowInSecondsValue != 0 {
+				ts = w.nowInSecondsValue
+			} else {
+				ts = int32(time.Now().UnixMicro() / 1e6)
+			}
+			f.writeInt(ts)
 		}
 	}
 

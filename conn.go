@@ -1437,6 +1437,8 @@ func (c *Conn) executeQuery(ctx context.Context, qry *Query) *Iter {
 	}
 	if c.version > protoVersion4 {
 		params.keyspace = c.currentKeyspace
+		params.nowInSeconds = qry.nowInSeconds
+		params.nowInSecondsValue = qry.nowInSecondsValue
 	}
 
 	var (
@@ -1646,6 +1648,8 @@ func (c *Conn) executeBatch(ctx context.Context, batch *Batch) *Iter {
 
 	if c.version > protoVersion4 {
 		req.keyspace = c.currentKeyspace
+		req.nowInSeconds = batch.nowInSeconds
+		req.nowInSecondsValue = batch.nowInSecondsValue
 	}
 
 	stmts := make(map[string]string, len(batch.Entries))

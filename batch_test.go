@@ -84,3 +84,39 @@ func TestBatch_WithTimestamp(t *testing.T) {
 		t.Errorf("got ts %d, expected %d", storedTs, micros)
 	}
 }
+
+func TestBatch_WithNowInSeconds(t *testing.T) {
+	session := createSession(t, func(config *ClusterConfig) {
+		config.Keyspace = "gocql_test"
+		config.Timeout = time.Hour
+	})
+	defer session.Close()
+
+	if session.cfg.ProtoVersion < protoVersion5 {
+		t.Skip("Batch now in seconds are only available on protocol >= 5")
+	}
+
+	if err := createTable(session, `CREATE TABLE batch_now_in_seconds (id int primary key, val text)`); err != nil {
+		t.Fatal(err)
+	}
+
+	seconds := time.Now().UnixMicro() / 1e6
+
+	b := session.NewBatch(LoggedBatch)
+	b.WithNowInSeconds(int32(seconds))
+	b.Query("INSERT INTO batch_now_in_seconds (id, val) VALUES (?, ?) USING TTL 3600", 1, "val")
+	if err := session.ExecuteBatch(b); err != nil {
+		t.Fatal(err)
+	}
+
+	var storedSeconds int64
+	if err := session.Query(`SELECT TTL(val) FROM batch_now_in_seconds WHERE id = ?`, 1).Scan(&storedSeconds); err != nil {
+		t.Fatal(err)
+	}
+
+	computedSeconds := time.Now().UnixMicro()/1e6 - storedSeconds
+
+	if computedSeconds != seconds {
+		t.Errorf("got seconds %d, expected %d", time.Now().Sub(), seconds)
+	}
+}

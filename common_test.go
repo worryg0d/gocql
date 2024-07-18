@@ -27,7 +27,6 @@ package gocql
 import (
 	"flag"
 	"fmt"
-	"github.com/gocql/gocql/lz4"
 	"log"
 	"net"
 	"reflect"
@@ -35,6 +34,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gocql/gocql/lz4"
 )
 
 var (

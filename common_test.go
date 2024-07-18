@@ -27,7 +27,6 @@ package gocql
 import (
 	"flag"
 	"fmt"
-	"github.com/gocql/gocql/lz4"
 	"log"
 	"net"
 	"reflect"
@@ -35,6 +34,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gocql/gocql/lz4"
 )
 
 var (
@@ -47,7 +48,7 @@ var (
 	flagAutoWait     = flag.Duration("autowait", 1000*time.Millisecond, "time to wait for autodiscovery to fill the hosts poll")
 	flagRunSslTest   = flag.Bool("runssl", false, "Set to true to run ssl test")
 	flagRunAuthTest  = flag.Bool("runauth", false, "Set to true to run authentication test")
-	flagCompressTest = flag.String("compressor", "", "compressor to use")
+	flagCompressTest = flag.String("compressor", "no-compression", "compressor to use")
 	flagTimeout      = flag.Duration("gocql.timeout", 5*time.Second, "sets the connection `timeout` for all operations")
 
 	flagCassVersion cassVersion
@@ -114,7 +115,7 @@ func createCluster(opts ...func(*ClusterConfig)) *ClusterConfig {
 		cluster.Compressor = &SnappyCompressor{}
 	case "lz4":
 		cluster.Compressor = &lz4.LZ4Compressor{}
-	case "":
+	case "no-compression":
 	default:
 		panic("invalid compressor: " + *flagCompressTest)
 	}

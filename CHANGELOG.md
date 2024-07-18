@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Support of sending queries to the specific node with Query.SetHostID() (CASSGO-4)
 
+- Support for Native Protocol 5. Following protocol changes exposed new API 
+  Query.SetKeyspace(), Query.WithNowInSeconds(), Batch.SetKeyspace(), Batch.WithNowInSeconds() (CASSGO-1)
+
 ### Changed
 
 - Move lz4 compressor to lz4 package within the gocql module (CASSGO-32)
@@ -40,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standardized spelling of datacenter (CASSGO-35)
 
 - Refactor HostInfo creation and ConnectAddress() method (CASSGO-45)
+
+- gocql.Compressor interface changes to follow append-like design. Bumped Go version to 1.19 (CASSGO-1)
 
 ### Fixed
 - Cassandra version unmarshal fix (CASSGO-49)

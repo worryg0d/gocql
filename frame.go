@@ -179,6 +179,15 @@ const (
 	flagWithNameValues        byte = 0x40
 	flagWithKeyspace          byte = 0x80
 
+	flagValuesV5                uint32 = 0x01
+	flagSkipMetaDataV5                 = 0x02
+	flagPageSizeV5                     = 0x04
+	flagWithPagingStateV5              = 0x08
+	flagWithSerialConsistencyV5        = 0x10
+	flagDefaultTimestampV5             = 0x20
+	flagWithNameValuesV5               = 0x40
+	flagWithKeyspaceV5                 = 0x80
+
 	// prepare flags
 	flagWithPreparedKeyspace uint32 = 0x01
 
@@ -1472,49 +1481,69 @@ func (f *framer) writeQueryParams(opts *queryParams) {
 		return
 	}
 
-	var flags byte
-	if len(opts.values) > 0 {
-		flags |= flagValues
-	}
-	if opts.skipMeta {
-		flags |= flagSkipMetaData
-	}
-	if opts.pageSize > 0 {
-		flags |= flagPageSize
-	}
-	if len(opts.pagingState) > 0 {
-		flags |= flagWithPagingState
-	}
-	if opts.serialConsistency > 0 {
-		flags |= flagWithSerialConsistency
-	}
-
+	var flagsByte byte
+	var flagsInt uint32
 	names := false
 
-	// protoV3 specific things
-	if f.proto > protoVersion2 {
+	switch {
+	case f.proto < protoVersion5:
+		if len(opts.values) > 0 {
+			flagsByte |= flagValues
+		}
+		if opts.skipMeta {
+			flagsByte |= flagSkipMetaData
+		}
+		if opts.pageSize > 0 {
+			flagsByte |= flagPageSize
+		}
+		if len(opts.pagingState) > 0 {
+			flagsByte |= flagWithPagingState
+		}
+		if opts.serialConsistency > 0 {
+			flagsByte |= flagWithSerialConsistency
+		}
+		if f.proto > protoVersion2 {
+			if opts.defaultTimestamp {
+				flagsByte |= flagDefaultTimestamp
+			}
+			if len(opts.values) > 0 && opts.values[0].name != "" {
+				flagsByte |= flagWithNameValues
+				names = true
+			}
+		}
+		if opts.keyspace != "" && f.proto > protoVersion4 {
+			flagsByte |= flagWithKeyspace
+		}
+		f.writeByte(flagsByte)
+
+	case f.proto >= protoVersion5:
+		if len(opts.values) > 0 {
+			flagsInt |= flagValuesV5
+		}
+		if opts.skipMeta {
+			flagsInt |= flagSkipMetaDataV5
+		}
+		if opts.pageSize > 0 {
+			flagsInt |= flagPageSizeV5
+		}
+		if len(opts.pagingState) > 0 {
+			flagsInt |= flagWithPagingStateV5
+		}
+		if opts.serialConsistency > 0 {
+			flagsInt |= flagWithSerialConsistencyV5
+		}
 		if opts.defaultTimestamp {
-			flags |= flagDefaultTimestamp
+			flagsInt |= flagDefaultTimestampV5
 		}
 
 		if len(opts.values) > 0 && opts.values[0].name != "" {
-			flags |= flagWithNameValues
+			flagsInt |= flagWithNameValuesV5
 			names = true
 		}
-	}
-
-	if opts.keyspace != "" {
-		if f.proto > protoVersion4 {
-			flags |= flagWithKeyspace
-		} else {
-			panic(fmt.Errorf("the keyspace can only be set with protocol 5 or higher"))
+		if opts.keyspace != "" {
+			flagsInt |= flagWithKeyspaceV5
 		}
-	}
-
-	if f.proto > protoVersion4 {
-		f.writeUint(uint32(flags))
-	} else {
-		f.writeByte(flags)
+		f.writeUint(flagsInt)
 	}
 
 	if n := len(opts.values); n > 0 {

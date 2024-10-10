@@ -1319,6 +1319,7 @@ const (
 	LIST_TYPE       = "org.apache.cassandra.db.marshal.ListType"
 	SET_TYPE        = "org.apache.cassandra.db.marshal.SetType"
 	MAP_TYPE        = "org.apache.cassandra.db.marshal.MapType"
+	VECTOR_TYPE     = "org.apache.cassandra.db.marshal.VectorType"
 )
 
 // represents a class specification in the type def AST

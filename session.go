@@ -951,8 +951,7 @@ type Query struct {
 	routingInfo *queryRoutingInfo
 
 	keyspace          string
-	useNowInSeconds   bool
-	nowInSecondsValue int
+	nowInSecondsValue *int
 }
 
 type queryRoutingInfo struct {
@@ -1460,8 +1459,7 @@ func (q *Query) SetKeyspace(keyspace string) *Query {
 //
 // Only available on protocol >= 5.
 func (q *Query) WithNowInSeconds(now int) *Query {
-	q.useNowInSeconds = true
-	q.nowInSecondsValue = now
+	q.nowInSecondsValue = &now
 	return q
 }
 
@@ -1784,8 +1782,7 @@ type Batch struct {
 	cancelBatch           func()
 	keyspace              string
 	metrics               *queryMetrics
-	useNowInSeconds       bool
-	nowInSecondsValue     int
+	nowInSeconds          *int
 
 	// routingInfo is a pointer because Query can be copied and copyable struct can't hold a mutex.
 	routingInfo *queryRoutingInfo
@@ -2096,8 +2093,7 @@ func (b *Batch) SetKeyspace(keyspace string) *Batch {
 //
 // Only available on protocol >= 5.
 func (b *Batch) WithNowInSeconds(now int) *Batch {
-	b.useNowInSeconds = true
-	b.nowInSecondsValue = now
+	b.nowInSeconds = &now
 	return b
 }
 

@@ -1464,14 +1464,13 @@ type queryParams struct {
 	defaultTimestamp      bool
 	defaultTimestampValue int64
 	// v5+
-	keyspace          string
-	useNowInSeconds   bool
-	nowInSecondsValue int
+	keyspace     string
+	nowInSeconds *int
 }
 
 func (q queryParams) String() string {
 	return fmt.Sprintf("[query_params consistency=%v skip_meta=%v page_size=%d paging_state=%q serial_consistency=%v default_timestamp=%v values=%v keyspace=%s now_in_seconds=%v]",
-		q.consistency, q.skipMeta, q.pageSize, q.pagingState, q.serialConsistency, q.defaultTimestamp, q.values, q.keyspace, q.useNowInSeconds)
+		q.consistency, q.skipMeta, q.pageSize, q.pagingState, q.serialConsistency, q.defaultTimestamp, q.values, q.keyspace, q.nowInSeconds)
 }
 
 func (f *framer) writeQueryParams(opts *queryParams) {
@@ -1518,7 +1517,7 @@ func (f *framer) writeQueryParams(opts *queryParams) {
 			flags |= flagWithKeyspace
 		}
 
-		if opts.useNowInSeconds {
+		if opts.nowInSeconds != nil {
 			flags |= flagWithNowInSeconds
 		}
 	}
@@ -1567,14 +1566,18 @@ func (f *framer) writeQueryParams(opts *queryParams) {
 		f.writeLong(ts)
 	}
 
-	if f.proto > protoVersion4 {
-		if opts.keyspace != "" {
-			f.writeString(opts.keyspace)
+	if opts.keyspace != "" {
+		if f.proto < protoVersion5 {
+			panic(fmt.Errorf("the keyspace can only be set with protocol 5 or higher"))
 		}
+		f.writeString(opts.keyspace)
+	}
 
-		if opts.useNowInSeconds {
-			f.writeInt(int32(opts.nowInSecondsValue))
+	if opts.nowInSeconds != nil {
+		if f.proto < protoVersion5 {
+			panic(fmt.Errorf("now_in_seconds can only be set with protocol 5 or higher"))
 		}
+		f.writeInt(int32(*opts.nowInSeconds))
 	}
 }
 
@@ -1687,9 +1690,8 @@ type writeBatchFrame struct {
 	customPayload map[string][]byte
 
 	//v5+
-	keyspace          string
-	useNowInSeconds   bool
-	nowInSecondsValue int
+	keyspace     string
+	nowInSeconds *int
 }
 
 func (w *writeBatchFrame) buildFrame(framer *framer, streamID int) error {
@@ -1755,10 +1757,9 @@ func (f *framer) writeBatchFrame(streamID int, w *writeBatchFrame, customPayload
 			flags |= flagWithKeyspace
 		}
 
-		if w.useNowInSeconds {
+		if w.nowInSeconds != nil {
 			flags |= flagWithNowInSeconds
 		}
-
 	}
 
 	if f.proto > protoVersion4 {
@@ -1781,14 +1782,18 @@ func (f *framer) writeBatchFrame(streamID int, w *writeBatchFrame, customPayload
 		f.writeLong(ts)
 	}
 
-	if f.proto > protoVersion4 {
-		if w.keyspace != "" {
-			f.writeString(w.keyspace)
+	if w.keyspace != "" {
+		if f.proto < protoVersion5 {
+			panic(fmt.Errorf("the keyspace can only be set with protocol 5 or higher"))
 		}
+		f.writeString(w.keyspace)
+	}
 
-		if w.useNowInSeconds {
-			f.writeInt(int32(w.nowInSecondsValue))
+	if w.nowInSeconds != nil {
+		if f.proto < protoVersion5 {
+			panic(fmt.Errorf("now_in_seconds can only be set with protocol 5 or higher"))
 		}
+		f.writeInt(int32(*w.nowInSeconds))
 	}
 
 	return f.finish()

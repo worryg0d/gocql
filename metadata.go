@@ -1321,6 +1321,7 @@ const (
 	SET_TYPE        = "org.apache.cassandra.db.marshal.SetType"
 	MAP_TYPE        = "org.apache.cassandra.db.marshal.MapType"
 	UDT_TYPE        = "org.apache.cassandra.db.marshal.UserType"
+	TUPLE_TYPE      = "org.apache.cassandra.db.marshal.TupleType"
 	VECTOR_TYPE     = "org.apache.cassandra.db.marshal.VectorType"
 )
 
@@ -1494,6 +1495,19 @@ func (class *typeParserClassNode) asTypeInfo() TypeInfo {
 			KeySpace: class.params[0].class.name,
 			Name:     string(udtName),
 			Elements: fields,
+		}
+	}
+	if strings.HasPrefix(class.name, TUPLE_TYPE) {
+		fields := make([]TypeInfo, len(class.params))
+		for i := 0; i < len(class.params); i++ {
+			fields[i] = class.params[i].class.asTypeInfo()
+		}
+		return TupleTypeInfo{
+			NativeType: NativeType{
+				typ:   TypeTuple,
+				proto: class.proto,
+			},
+			Elems: fields,
 		}
 	}
 	if strings.HasPrefix(class.name, VECTOR_TYPE) {

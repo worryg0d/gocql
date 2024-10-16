@@ -3372,7 +3372,7 @@ func TestQuery_WithNowInSeconds(t *testing.T) {
 		t.Skip("Query now in seconds are only available on protocol >= 5")
 	}
 
-	if err := createTable(session, `CREATE TABLE query_now_in_seconds (id int primary key, val text)`); err != nil {
+	if err := createTable(session, `CREATE TABLE IF NOT EXISTS query_now_in_seconds (id int primary key, val text)`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3464,7 +3464,7 @@ func TestLargeSizeQuery(t *testing.T) {
 	session := createSession(t)
 	defer session.Close()
 
-	if err := createTable(session, "CREATE TABLE gocql_test.large_size_query(id int, text_col text, PRIMARY KEY (id))"); err != nil {
+	if err := createTable(session, "CREATE TABLE IF NOT EXISTS gocql_test.large_size_query(id int, text_col text, PRIMARY KEY (id))"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3490,7 +3490,7 @@ func TestQueryCompressionNotWorthIt(t *testing.T) {
 	session := createSession(t)
 	defer session.Close()
 
-	if err := createTable(session, "CREATE TABLE gocql_test.compression_now_worth_it(id int, text_col text, PRIMARY KEY (id))"); err != nil {
+	if err := createTable(session, "CREATE TABLE IF NOT EXISTS gocql_test.compression_now_worth_it(id int, text_col text, PRIMARY KEY (id))"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1193,26 +1193,10 @@ func (c *Conn) execInternal(ctx context.Context, req frameBuilder, tracer Tracer
 	var n int
 
 	if c.version > protoVersion4 && startupCompleted {
-		err = framer.prepareModernLayout()
-		if err != nil {
-			// closeWithError will block waiting for this stream to either receive a response
-			// or for us to timeout.
-			close(call.timeout)
-			// We failed to serialize the frame into a buffer.
-			// This should not affect the connection as we didn't write anything. We just free the current call.
-			c.mu.Lock()
-			if !c.closed {
-				delete(c.calls, call.streamID)
-			}
-			c.mu.Unlock()
-			// We need to release the stream after we remove the call from c.calls, otherwise the existingCall != nil
-			// check above could fail.
-			c.releaseStream(call)
-			return nil, err
-		}
+		n, err = c.writeSegments(ctx, framer.buf, framer.compres)
+	} else {
+		n, err = c.w.writeContext(ctx, framer.buf)
 	}
-
-	n, err = c.w.writeContext(ctx, framer.buf)
 	if err != nil {
 		// closeWithError will block waiting for this stream to either receive a response
 		// or for us to timeout, close the timeout chan here. Im not entirely sure
@@ -1300,6 +1284,45 @@ func (c *Conn) execInternal(ctx context.Context, req frameBuilder, tracer Tracer
 		close(call.timeout)
 		return nil, ErrConnectionClosed
 	}
+}
+
+func (c *Conn) writeSegments(ctx context.Context, frame []byte, compressor Compressor) (n int, err error) {
+	var (
+		selfContained = true
+		segment       []byte
+		numBytes      int
+	)
+
+	// Process the buffer in chunks if it exceeds the max payload size
+	for len(frame) > maxPayloadSize {
+		segment, err = newSegment(frame[:maxPayloadSize], false, compressor)
+		if err != nil {
+			return 0, err
+		}
+
+		numBytes, err = c.w.writeContext(ctx, segment)
+		if err != nil {
+			return 0, err
+		}
+
+		n += numBytes
+		selfContained = false
+		frame = frame[maxPayloadSize:]
+	}
+
+	// Process the remaining buffer
+	segment, err = newSegment(frame, selfContained, compressor)
+	if err != nil {
+		return 0, err
+	}
+
+	numBytes, err = c.w.writeContext(ctx, segment)
+	if err != nil {
+		return 0, err
+	}
+
+	n += numBytes
+	return n, nil
 }
 
 // ObservedStream observes a single request/response stream.

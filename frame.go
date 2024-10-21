@@ -2134,52 +2134,6 @@ func (f *framer) writeBytesMap(m map[string][]byte) {
 	}
 }
 
-func (f *framer) prepareModernLayout() error {
-	// Ensure protocol version is V5 or higher
-	if f.proto < protoVersion5 {
-		panic("Modern layout is not supported with version V4 or less")
-	}
-
-	selfContained := true
-
-	var (
-		adjustedBuf []byte
-		tempBuf     []byte
-		err         error
-	)
-
-	// Process the buffer in chunks if it exceeds the max payload size
-	for len(f.buf) > maxPayloadSize {
-		if f.compres != nil {
-			tempBuf, err = newCompressedSegment(f.buf[:maxPayloadSize], false, f.compres)
-		} else {
-			tempBuf, err = newUncompressedSegment(f.buf[:maxPayloadSize], false)
-		}
-		if err != nil {
-			return err
-		}
-
-		adjustedBuf = append(adjustedBuf, tempBuf...)
-		f.buf = f.buf[maxPayloadSize:]
-		selfContained = false
-	}
-
-	// Process the remaining buffer
-	if f.compres != nil {
-		tempBuf, err = newCompressedSegment(f.buf, selfContained, f.compres)
-	} else {
-		tempBuf, err = newUncompressedSegment(f.buf, selfContained)
-	}
-	if err != nil {
-		return err
-	}
-
-	adjustedBuf = append(adjustedBuf, tempBuf...)
-	f.buf = adjustedBuf
-
-	return nil
-}
-
 func readUncompressedSegment(r io.Reader) ([]byte, bool, error) {
 	const headerSize = 6
 	header := [headerSize + 1]byte{}
@@ -2376,4 +2330,13 @@ func readCompressedSegment(r io.Reader, compressor Compressor) ([]byte, bool, er
 	}
 
 	return uncompressedPayload, selfContained, nil
+}
+
+func newSegment(payload []byte, isSelfContained bool, compressor Compressor) (segment []byte, err error) {
+	if compressor != nil {
+		segment, err = newCompressedSegment(payload, isSelfContained, compressor)
+	} else {
+		segment, err = newUncompressedSegment(payload, isSelfContained)
+	}
+	return segment, err
 }

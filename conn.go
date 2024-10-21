@@ -187,11 +187,9 @@ var TimeoutLimit int64 = 0
 // queries, but users are usually advised to use a more reliable, higher
 // level API.
 type Conn struct {
-	conn net.Conn
-	r    *bufio.Reader
-	w    contextWriter
+	r ConnReader
+	w contextWriter
 
-	timeout        time.Duration
 	writeTimeout   time.Duration
 	cfg            *ConnConfig
 	frameObserver  FrameHeaderObserver
@@ -269,8 +267,10 @@ func (s *Session) dialWithoutObserver(ctx context.Context, host *HostInfo, cfg *
 
 	ctx, cancel := context.WithCancel(ctx)
 	c := &Conn{
-		conn:          dialedHost.Conn,
-		r:             bufio.NewReader(dialedHost.Conn),
+		r: &connReader{
+			conn: dialedHost.Conn,
+			r:    bufio.NewReader(dialedHost.Conn),
+		},
 		cfg:           cfg,
 		calls:         make(map[int]*callReq),
 		version:       uint8(cfg.ProtoVersion),
@@ -320,16 +320,16 @@ func (c *Conn) init(ctx context.Context, dialedHost *DialedHost) error {
 		conn:        c,
 	}
 
-	c.timeout = c.cfg.ConnectTimeout
+	c.r.SetTimeout(c.cfg.ConnectTimeout)
 	if err := startup.setupConn(ctx); err != nil {
 		return err
 	}
 
-	c.timeout = c.cfg.Timeout
+	c.r.SetTimeout(c.cfg.Timeout)
 
 	// dont coalesce startup frames
 	if c.session.cfg.WriteCoalesceWaitTime > 0 && !c.cfg.disableCoalesce && !dialedHost.DisableCoalesce {
-		c.w = newWriteCoalescer(c.conn, c.writeTimeout, c.session.cfg.WriteCoalesceWaitTime, ctx.Done())
+		c.w = newWriteCoalescer(dialedHost.Conn, c.writeTimeout, c.session.cfg.WriteCoalesceWaitTime, ctx.Done())
 	}
 
 	go c.serve(ctx)
@@ -342,29 +342,6 @@ func (c *Conn) Write(p []byte) (n int, err error) {
 	return c.w.writeContext(context.Background(), p)
 }
 
-func (c *Conn) Read(p []byte) (n int, err error) {
-	const maxAttempts = 5
-
-	for i := 0; i < maxAttempts; i++ {
-		var nn int
-		if c.timeout > 0 {
-			c.conn.SetReadDeadline(time.Now().Add(c.timeout))
-		}
-
-		nn, err = io.ReadFull(c.r, p[n:])
-		n += nn
-		if err == nil {
-			break
-		}
-
-		if verr, ok := err.(net.Error); !ok || !verr.Temporary() {
-			break
-		}
-	}
-
-	return
-}
-
 type startupCoordinator struct {
 	conn        *Conn
 	frameTicker chan struct{}
@@ -372,8 +349,8 @@ type startupCoordinator struct {
 
 func (s *startupCoordinator) setupConn(ctx context.Context) error {
 	var cancel context.CancelFunc
-	if s.conn.timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, s.conn.timeout)
+	if s.conn.r.GetTimeout() > 0 {
+		ctx, cancel = context.WithTimeout(ctx, s.conn.r.GetTimeout())
 	} else {
 		ctx, cancel = context.WithCancel(ctx)
 	}
@@ -588,7 +565,7 @@ func (c *Conn) closeWithError(err error) {
 }
 
 func (c *Conn) close() error {
-	return c.conn.Close()
+	return c.r.Close()
 }
 
 func (c *Conn) Close() {
@@ -680,7 +657,7 @@ func (c *Conn) recv(ctx context.Context, startupCompleted bool) error {
 		return c.recvSegment(ctx)
 	}
 
-	return c.processFrame(ctx, c)
+	return c.processFrame(ctx, c.r)
 }
 
 func (c *Conn) processFrame(ctx context.Context, r io.Reader) error {
@@ -688,8 +665,8 @@ func (c *Conn) processFrame(ctx context.Context, r io.Reader) error {
 
 	// read a full header, ignore timeouts, as this is being ran in a loop
 	// TODO: TCP level deadlines? or just query level deadlines?
-	if c.timeout > 0 {
-		c.conn.SetReadDeadline(time.Time{})
+	if c.r.GetTimeout() > 0 {
+		c.r.SetReadDeadline(time.Time{})
 	}
 
 	headStartTime := time.Now()
@@ -727,7 +704,7 @@ func (c *Conn) processFrame(ctx context.Context, r io.Reader) error {
 		// reserved stream that we dont use, probably due to a protocol error
 		// or a bug in Cassandra, this should be an error, parse it and return.
 		framer := newFramer(c.compressor, c.version)
-		if err := framer.readFrame(c, &head); err != nil {
+		if err := framer.readFrame(r, &head); err != nil {
 			return err
 		}
 
@@ -875,6 +852,80 @@ func (c *Conn) processAllFramesInSegment(ctx context.Context, r *bytes.Reader) e
 	}
 
 	return err
+}
+
+type ConnReader interface {
+	net.Conn
+
+	SetTimeout(timeout time.Duration)
+	GetTimeout() time.Duration
+}
+
+// connReader implements io.Reader.
+// If reading from socket is failed, it retries up to 5 times.
+type connReader struct {
+	conn    net.Conn
+	r       *bufio.Reader
+	timeout time.Duration
+}
+
+func (c *connReader) Read(p []byte) (n int, err error) {
+	const maxAttempts = 5
+
+	for i := 0; i < maxAttempts; i++ {
+		var nn int
+		if c.timeout > 0 {
+			c.conn.SetReadDeadline(time.Now().Add(c.timeout))
+		}
+
+		nn, err = io.ReadFull(c.r, p[n:])
+		n += nn
+		if err == nil {
+			break
+		}
+
+		if verr, ok := err.(net.Error); !ok || !verr.Temporary() {
+			break
+		}
+	}
+
+	return
+}
+
+func (c *connReader) Write(b []byte) (n int, err error) {
+	return c.conn.Write(b)
+}
+
+func (c *connReader) Close() error {
+	return c.conn.Close()
+}
+
+func (c *connReader) LocalAddr() net.Addr {
+	return c.conn.LocalAddr()
+}
+
+func (c *connReader) RemoteAddr() net.Addr {
+	return c.conn.RemoteAddr()
+}
+
+func (c *connReader) SetDeadline(t time.Time) error {
+	return c.conn.SetDeadline(t)
+}
+
+func (c *connReader) SetReadDeadline(t time.Time) error {
+	return c.conn.SetReadDeadline(t)
+}
+
+func (c *connReader) SetWriteDeadline(t time.Time) error {
+	return c.conn.SetWriteDeadline(t)
+}
+
+func (c *connReader) SetTimeout(timeout time.Duration) {
+	c.timeout = timeout
+}
+
+func (c *connReader) GetTimeout() time.Duration {
+	return c.timeout
 }
 
 type callReq struct {
@@ -1226,7 +1277,7 @@ func (c *Conn) execInternal(ctx context.Context, req frameBuilder, tracer Tracer
 	}
 
 	var timeoutCh <-chan time.Time
-	if c.timeout > 0 {
+	if timeout := c.r.GetTimeout(); timeout > 0 {
 		if call.timer == nil {
 			call.timer = time.NewTimer(0)
 			<-call.timer.C
@@ -1239,7 +1290,7 @@ func (c *Conn) execInternal(ctx context.Context, req frameBuilder, tracer Tracer
 			}
 		}
 
-		call.timer.Reset(c.timeout)
+		call.timer.Reset(timeout)
 		timeoutCh = call.timer.C
 	}
 

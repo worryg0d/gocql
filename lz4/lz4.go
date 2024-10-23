@@ -47,21 +47,23 @@ func (s LZ4Compressor) Name() string {
 	return "lz4"
 }
 
-func (s LZ4Compressor) Encode(data []byte) ([]byte, error) {
-	buf := make([]byte, lz4.CompressBlockBound(len(data)+4))
+func (s LZ4Compressor) Encode(dst, data []byte) ([]byte, error) {
+	if dst == nil {
+		dst = make([]byte, lz4.CompressBlockBound(len(data)+4))
+	}
 	var compressor lz4.Compressor
-	n, err := compressor.CompressBlock(data, buf[4:])
+	n, err := compressor.CompressBlock(data, dst[4:])
 	// According to lz4.CompressBlock doc, it doesn't fail as long as the dst
 	// buffer length is at least lz4.CompressBlockBound(len(data))) bytes, but
 	// we check for error anyway just to be thorough.
 	if err != nil {
 		return nil, err
 	}
-	binary.BigEndian.PutUint32(buf, uint32(len(data)))
-	return buf[:n+4], nil
+	binary.BigEndian.PutUint32(dst, uint32(len(data)))
+	return dst[:n+4], nil
 }
 
-func (s LZ4Compressor) Decode(data []byte) ([]byte, error) {
+func (s LZ4Compressor) Decode(dst, data []byte) ([]byte, error) {
 	if len(data) < 4 {
 		return nil, fmt.Errorf("cassandra lz4 block size should be >4, got=%d", len(data))
 	}
@@ -69,17 +71,21 @@ func (s LZ4Compressor) Decode(data []byte) ([]byte, error) {
 	if uncompressedLength == 0 {
 		return nil, nil
 	}
-	buf := make([]byte, uncompressedLength)
-	n, err := lz4.UncompressBlock(data[4:], buf)
-	return buf[:n], err
+	if dst == nil {
+		dst = make([]byte, uncompressedLength)
+	}
+	n, err := lz4.UncompressBlock(data[4:], dst)
+	return dst[:n], err
 }
 
-func (s LZ4Compressor) DecodeSized(data []byte, size uint32) ([]byte, error) {
-	buf := make([]byte, size)
-	_, err := lz4.UncompressBlock(data, buf)
+func (s LZ4Compressor) DecodeSized(dst, data []byte, decodedSize uint32) ([]byte, error) {
+	if dst == nil || len(data) < int(decodedSize) {
+		dst = make([]byte, decodedSize)
+	}
+	_, err := lz4.UncompressBlock(data, dst)
 	if err != nil {
 		return nil, err
 	}
 
-	return buf, nil
+	return dst, nil
 }

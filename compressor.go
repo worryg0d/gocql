@@ -30,9 +30,12 @@ import (
 
 type Compressor interface {
 	Name() string
-	Encode(data []byte) ([]byte, error)
-	Decode(data []byte) ([]byte, error)
-	DecodeSized(data []byte, size uint32) ([]byte, error)
+	Encode(dst, data []byte) ([]byte, error)
+	Decode(dst, data []byte) ([]byte, error)
+
+	// DecodeSized decodes the encoded bytes and appends them to dst.
+	// decodeSize is the size of data after decompression.
+	DecodeSized(dst, encoded []byte, decodedSize uint32) ([]byte, error)
 }
 
 // SnappyCompressor implements the Compressor interface and can be used to
@@ -44,15 +47,14 @@ func (s SnappyCompressor) Name() string {
 	return "snappy"
 }
 
-func (s SnappyCompressor) Encode(data []byte) ([]byte, error) {
-	return snappy.Encode(nil, data), nil
+func (s SnappyCompressor) Encode(dst, data []byte) ([]byte, error) {
+	return snappy.Encode(dst, data), nil
 }
 
-func (s SnappyCompressor) Decode(data []byte) ([]byte, error) {
-	return snappy.Decode(nil, data)
+func (s SnappyCompressor) Decode(dst, data []byte) ([]byte, error) {
+	return snappy.Decode(dst, data)
 }
 
-func (s SnappyCompressor) DecodeSized(data []byte, size uint32) ([]byte, error) {
-	buf := make([]byte, size)
-	return snappy.Decode(buf, data)
+func (s SnappyCompressor) DecodeSized(dst, data []byte, _ uint32) ([]byte, error) {
+	return snappy.Decode(dst, data)
 }

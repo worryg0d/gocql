@@ -217,7 +217,7 @@ func (m testMockedCompressor) Name() string {
 	return "testMockedCompressor"
 }
 
-func (m testMockedCompressor) Encode(data []byte) ([]byte, error) {
+func (m testMockedCompressor) Encode(_, data []byte) ([]byte, error) {
 	encoded := make([]byte, len(data)+4)
 	binary.BigEndian.PutUint32(encoded, uint32(len(data)))
 	copy(encoded[4:], data)
@@ -227,14 +227,14 @@ func (m testMockedCompressor) Encode(data []byte) ([]byte, error) {
 	return encoded, nil
 }
 
-func (m testMockedCompressor) Decode(data []byte) ([]byte, error) {
+func (m testMockedCompressor) Decode(_, data []byte) ([]byte, error) {
 	if m.expectedError != nil {
 		return nil, m.expectedError
 	}
 	return data, nil
 }
 
-func (m testMockedCompressor) DecodeSized(data []byte, size uint32) ([]byte, error) {
+func (m testMockedCompressor) DecodeSized(_, data []byte, size uint32) ([]byte, error) {
 	if m.expectedError != nil {
 		return nil, m.expectedError
 	}

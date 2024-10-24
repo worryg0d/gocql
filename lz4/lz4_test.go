@@ -71,10 +71,12 @@ func TestLZ4Compressor_AppendCompressedDecompressed(t *testing.T) {
 
 func TestLZ4Compressor_AppendWithLengthGrowSliceWithData(t *testing.T) {
 	var tests = []struct {
-		name      string
-		src       []byte
-		dst       []byte
-		decodeDst []byte
+		name                 string
+		src                  []byte
+		dst                  []byte
+		shouldReuseDst       bool
+		decodeDst            []byte
+		shouldReuseDecodeDst bool
 	}{
 		{
 			name:      "both dst are empty",
@@ -99,6 +101,20 @@ func TestLZ4Compressor_AppendWithLengthGrowSliceWithData(t *testing.T) {
 			src:       []byte("another piece of data"),
 			dst:       []byte("dst"),
 			decodeDst: []byte("decodeDst"),
+		},
+		{
+			name:                 "both dst slices have enough capacity",
+			src:                  []byte("small"),
+			dst:                  createBufWithCapAndData("cap=128", 128),
+			shouldReuseDst:       true,
+			decodeDst:            createBufWithCapAndData("cap=256", 256),
+			shouldReuseDecodeDst: true,
+		},
+		{
+			name:      "both dsts have some data and not enough capacity",
+			src:       []byte("small"),
+			dst:       createBufWithCapAndData("data", 6),
+			decodeDst: createBufWithCapAndData("wow", 4),
 		},
 	}
 
@@ -111,7 +127,13 @@ func TestLZ4Compressor_AppendWithLengthGrowSliceWithData(t *testing.T) {
 			result, err := compressor.AppendCompressedWithLength(tt.dst, tt.src)
 			require.NoError(t, err)
 
-			expectedCap := cap(tt.dst) + lz4.CompressBlockBound(len(tt.src)) + dataLengthSize
+			var expectedCap int
+			if tt.shouldReuseDst {
+				expectedCap = cap(tt.dst)
+			} else {
+				expectedCap = len(tt.dst) + lz4.CompressBlockBound(len(tt.src)) + dataLengthSize
+			}
+
 			require.Equal(t, expectedCap, cap(result))
 			if len(tt.dst) > 0 {
 				require.Equal(t, tt.dst, result[:len(tt.dst)])
@@ -120,7 +142,13 @@ func TestLZ4Compressor_AppendWithLengthGrowSliceWithData(t *testing.T) {
 			result, err = compressor.AppendDecompressedWithLength(tt.decodeDst, result[len(tt.dst):])
 			require.NoError(t, err)
 
-			expectedDecodeCap := cap(tt.decodeDst) + len(tt.src)
+			var expectedDecodeCap int
+			if tt.shouldReuseDecodeDst {
+				expectedDecodeCap = cap(tt.decodeDst)
+			} else {
+				expectedDecodeCap = len(tt.decodeDst) + len(tt.src)
+			}
+
 			require.Equal(t, expectedDecodeCap, cap(result))
 			require.Equal(t, tt.src, result[len(tt.decodeDst):])
 		})
@@ -129,10 +157,12 @@ func TestLZ4Compressor_AppendWithLengthGrowSliceWithData(t *testing.T) {
 
 func TestLZ4Compressor_AppendGrowSliceWithData(t *testing.T) {
 	var tests = []struct {
-		name      string
-		src       []byte
-		dst       []byte
-		decodeDst []byte
+		name                 string
+		src                  []byte
+		dst                  []byte
+		shouldReuseDst       bool
+		decodeDst            []byte
+		shouldReuseDecodeDst bool
 	}{
 		{
 			name:      "both dst are empty",
@@ -158,6 +188,20 @@ func TestLZ4Compressor_AppendGrowSliceWithData(t *testing.T) {
 			dst:       []byte("dst"),
 			decodeDst: []byte("decodeDst"),
 		},
+		{
+			name:                 "both dst slices have enough capacity",
+			src:                  []byte("small"),
+			dst:                  createBufWithCapAndData("cap=128", 128),
+			shouldReuseDst:       true,
+			decodeDst:            createBufWithCapAndData("cap=256", 256),
+			shouldReuseDecodeDst: true,
+		},
+		{
+			name:      "both dst slices have some data and not enough capacity",
+			src:       []byte("small"),
+			dst:       createBufWithCapAndData("data", 6),
+			decodeDst: createBufWithCapAndData("wow", 4),
+		},
 	}
 
 	for _, tt := range tests {
@@ -169,7 +213,13 @@ func TestLZ4Compressor_AppendGrowSliceWithData(t *testing.T) {
 			result, err := compressor.AppendCompressed(tt.dst, tt.src)
 			require.NoError(t, err)
 
-			expectedCap := cap(tt.dst) + lz4.CompressBlockBound(len(tt.src))
+			var expectedCap int
+			if tt.shouldReuseDst {
+				expectedCap = cap(tt.dst)
+			} else {
+				expectedCap = len(tt.dst) + lz4.CompressBlockBound(len(tt.src))
+			}
+
 			require.Equal(t, expectedCap, cap(result))
 			if len(tt.dst) > 0 {
 				require.Equal(t, tt.dst, result[:len(tt.dst)])
@@ -179,9 +229,21 @@ func TestLZ4Compressor_AppendGrowSliceWithData(t *testing.T) {
 			result, err = compressor.AppendDecompressed(tt.decodeDst, result[len(tt.dst):], uncompressedLen)
 			require.NoError(t, err)
 
-			expectedDecodeCap := cap(tt.decodeDst) + len(tt.src)
+			var expectedDecodeCap int
+			if tt.shouldReuseDst {
+				expectedDecodeCap = cap(tt.decodeDst)
+			} else {
+				expectedDecodeCap = len(tt.decodeDst) + len(tt.src)
+			}
+
 			require.Equal(t, expectedDecodeCap, cap(result))
 			require.Equal(t, tt.src, result[len(tt.decodeDst):])
 		})
 	}
+}
+
+func createBufWithCapAndData(data string, cap int) []byte {
+	buf := make([]byte, cap)
+	copy(buf, data)
+	return buf[:len(data)]
 }

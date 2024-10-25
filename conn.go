@@ -1643,7 +1643,8 @@ func (c *Conn) executeQuery(ctx context.Context, qry *Query) *Iter {
 			numRows: x.numRows,
 		}
 
-		if params.skipMeta {
+		// TODO(?): If Metadata_changed is set, then we should ignore skipMeta?
+		if params.skipMeta && x.meta.newMetadataID == nil {
 			if info != nil {
 				iter.meta = info.response
 				iter.meta.pagingState = copyBytes(x.meta.pagingState)
@@ -1684,8 +1685,29 @@ func (c *Conn) executeQuery(ctx context.Context, qry *Query) *Iter {
 		// is not consistent with regards to its schema.
 		return iter
 	case *RequestErrUnprepared:
+		//	stmtCacheKey := c.session.stmtsLRU.keyFor(c.host.HostID(), c.currentKeyspace, qry.stmt)
+		//	c.session.stmtsLRU.evictPreparedID(stmtCacheKey, x.StatementId)
+		//	return c.executeQuery(ctx, qry)
+		// TODO For testing purpose only, do not forget to remove when merging it to the PR
 		stmtCacheKey := c.session.stmtsLRU.keyFor(c.host.HostID(), c.currentKeyspace, qry.stmt)
-		c.session.stmtsLRU.evictPreparedID(stmtCacheKey, x.StatementId)
+		prep := &writePrepareFrame{
+			statement: qry.stmt,
+		}
+		if c.version > protoVersion4 {
+			prep.keyspace = qry.keyspace
+		}
+
+		framer, err := c.exec(c.ctx, prep, qry.trace)
+		if err != nil {
+			c.session.stmtsLRU.remove(stmtCacheKey)
+			return &Iter{err: x, framer: framer}
+		}
+
+		_, err = framer.parseFrame()
+		if err != nil {
+			c.session.stmtsLRU.remove(stmtCacheKey)
+			return &Iter{err: x, framer: framer}
+		}
 		return c.executeQuery(ctx, qry)
 	case error:
 		return &Iter{err: x, framer: framer}

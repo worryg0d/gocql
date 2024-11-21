@@ -32,7 +32,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"io"
 	"math"
 	"math/big"
@@ -44,6 +43,8 @@ import (
 	"testing"
 	"time"
 	"unicode"
+
+	"github.com/stretchr/testify/require"
 
 	"gopkg.in/inf.v0"
 )
@@ -3303,7 +3304,6 @@ func TestUnsetColBatch(t *testing.T) {
 	}
 	var id, mInt, count int
 	var mText string
-
 	if err := session.Query("SELECT count(*) FROM gocql_test.batchUnsetInsert;").Scan(&count); err != nil {
 		t.Fatalf("Failed to select with err: %v", err)
 	} else if count != 2 {
@@ -3336,5 +3336,48 @@ func TestQuery_NamedValues(t *testing.T) {
 	var value string
 	if err := session.Query("SELECT VALUE from gocql_test.named_query WHERE id = :id", NamedValue("id", 1)).Scan(&value); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestQuery_SetHost(t *testing.T) {
+	// This test ensures that queries are sent to the specified host only
+
+	session := createSession(t)
+	defer session.Close()
+
+	hosts, err := session.GetHosts()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, expectedHost := range hosts {
+		const iterations = 5
+		for i := 0; i < iterations; i++ {
+			var actualHostID string
+			err := session.Query("SELECT host_id FROM system.local").
+				SetHost(expectedHost).
+				Scan(&actualHostID)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if expectedHost.HostID() != actualHostID {
+				t.Fatalf("Expected query to be executed on host %s, but it was executed on %s",
+					expectedHost.HostID(),
+					actualHostID,
+				)
+			}
+		}
+	}
+
+	// ensuring that the driver properly handles the case
+	// when specified host for the query is down
+	host := hosts[0]
+	host.state = NodeDown
+	err = session.Query("SELECT host_id FROM system.local").
+		SetHost(host).
+		Exec()
+	if !errors.Is(err, ErrNoConnections) {
+		t.Fatalf("Expected error to be: %v, but got %v", ErrNoConnections, err)
 	}
 }

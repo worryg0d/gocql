@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Support of sending queries to the specific node with Query.SetHostID() (CASSGO-4)
+
 ### Changed
 
 - Move lz4 compressor to lz4 package within the gocql module (CASSGO-32)

@@ -41,6 +41,7 @@ type ExecutableQuery interface {
 	Keyspace() string
 	Table() string
 	IsIdempotent() bool
+	GetHost() *HostInfo
 
 	withContext(context.Context) ExecutableQuery
 
@@ -83,12 +84,27 @@ func (q *queryExecutor) speculate(ctx context.Context, qry ExecutableQuery, sp S
 }
 
 func (q *queryExecutor) executeQuery(qry ExecutableQuery) (*Iter, error) {
-	hostIter := q.policy.Pick(qry)
+	var hostIter NextHost
+
+	// checking if the host is specified for the query,
+	// if it is, the query should be executed at the specified host
+	host := qry.GetHost()
+	if host != nil {
+		hostIter = func() SelectedHost {
+			return (*selectedHost)(host)
+		}
+	}
+
+	// if host is not specified for the query,
+	// then a host will be picked by HostSelectionPolicy
+	if hostIter == nil {
+		hostIter = q.policy.Pick(qry)
+	}
 
 	// check if the query is not marked as idempotent, if
 	// it is, we force the policy to NonSpeculative
 	sp := qry.speculativeExecutionPolicy()
-	if !qry.IsIdempotent() || sp.Attempts() == 0 {
+	if host != nil || !qry.IsIdempotent() || sp.Attempts() == 0 {
 		return q.do(qry.Context(), qry, hostIter), nil
 	}
 
@@ -129,12 +145,17 @@ func (q *queryExecutor) executeQuery(qry ExecutableQuery) (*Iter, error) {
 func (q *queryExecutor) do(ctx context.Context, qry ExecutableQuery, hostIter NextHost) *Iter {
 	selectedHost := hostIter()
 	rt := qry.retryPolicy()
+	specifiedHost := qry.GetHost()
 
 	var lastErr error
 	var iter *Iter
 	for selectedHost != nil {
 		host := selectedHost.Info()
-		if host == nil || !host.IsUp() {
+		if specifiedHost != nil && host != nil && !host.IsUp() {
+			return &Iter{err: ErrNoConnections}
+		}
+
+		if (host == nil || !host.IsUp()) && specifiedHost == nil {
 			selectedHost = hostIter()
 			continue
 		}
@@ -166,7 +187,9 @@ func (q *queryExecutor) do(ctx context.Context, qry ExecutableQuery, hostIter Ne
 
 		// Exit if the query was successful
 		// or query is not idempotent or no retry policy defined
-		if iter.err == nil || !qry.IsIdempotent() || rt == nil {
+		// Also, if there is specified host for the query to be executed on
+		// and query execution is failed we should exit
+		if iter.err == nil || specifiedHost != nil || !qry.IsIdempotent() || rt == nil {
 			return iter
 		}
 

@@ -32,7 +32,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"io"
 	"math"
 	"math/big"
@@ -45,7 +44,9 @@ import (
 	"time"
 	"unicode"
 
-	inf "gopkg.in/inf.v0"
+	"github.com/stretchr/testify/require"
+
+	"gopkg.in/inf.v0"
 )
 
 func TestEmptyHosts(t *testing.T) {
@@ -454,7 +455,7 @@ func TestCAS(t *testing.T) {
 		t.Fatal("truncate:", err)
 	}
 
-	successBatch := session.NewBatch(LoggedBatch)
+	successBatch := session.Batch(LoggedBatch)
 	successBatch.Query("INSERT INTO cas_table (title, revid, last_modified) VALUES (?, ?, ?) IF NOT EXISTS", title, revid, modified)
 	if applied, _, err := session.ExecuteBatchCAS(successBatch, &titleCAS, &revidCAS, &modifiedCAS); err != nil {
 		t.Fatal("insert:", err)
@@ -462,7 +463,7 @@ func TestCAS(t *testing.T) {
 		t.Fatalf("insert should have been applied: title=%v revID=%v modified=%v", titleCAS, revidCAS, modifiedCAS)
 	}
 
-	successBatch = session.NewBatch(LoggedBatch)
+	successBatch = session.Batch(LoggedBatch)
 	successBatch.Query("INSERT INTO cas_table (title, revid, last_modified) VALUES (?, ?, ?) IF NOT EXISTS", title+"_foo", revid, modified)
 	casMap := make(map[string]interface{})
 	if applied, _, err := session.MapExecuteBatchCAS(successBatch, casMap); err != nil {
@@ -471,7 +472,7 @@ func TestCAS(t *testing.T) {
 		t.Fatal("insert should have been applied")
 	}
 
-	failBatch := session.NewBatch(LoggedBatch)
+	failBatch := session.Batch(LoggedBatch)
 	failBatch.Query("INSERT INTO cas_table (title, revid, last_modified) VALUES (?, ?, ?) IF NOT EXISTS", title, revid, modified)
 	if applied, _, err := session.ExecuteBatchCAS(successBatch, &titleCAS, &revidCAS, &modifiedCAS); err != nil {
 		t.Fatal("insert:", err)
@@ -479,14 +480,14 @@ func TestCAS(t *testing.T) {
 		t.Fatalf("insert should have been applied: title=%v revID=%v modified=%v", titleCAS, revidCAS, modifiedCAS)
 	}
 
-	insertBatch := session.NewBatch(LoggedBatch)
+	insertBatch := session.Batch(LoggedBatch)
 	insertBatch.Query("INSERT INTO cas_table (title, revid, last_modified) VALUES ('_foo', 2c3af400-73a4-11e5-9381-29463d90c3f0, DATEOF(NOW()))")
 	insertBatch.Query("INSERT INTO cas_table (title, revid, last_modified) VALUES ('_foo', 3e4ad2f1-73a4-11e5-9381-29463d90c3f0, DATEOF(NOW()))")
 	if err := session.ExecuteBatch(insertBatch); err != nil {
 		t.Fatal("insert:", err)
 	}
 
-	failBatch = session.NewBatch(LoggedBatch)
+	failBatch = session.Batch(LoggedBatch)
 	failBatch.Query("UPDATE cas_table SET last_modified = DATEOF(NOW()) WHERE title='_foo' AND revid=2c3af400-73a4-11e5-9381-29463d90c3f0 IF last_modified=DATEOF(NOW());")
 	failBatch.Query("UPDATE cas_table SET last_modified = DATEOF(NOW()) WHERE title='_foo' AND revid=3e4ad2f1-73a4-11e5-9381-29463d90c3f0 IF last_modified=DATEOF(NOW());")
 	if applied, iter, err := session.ExecuteBatchCAS(failBatch, &titleCAS, &revidCAS, &modifiedCAS); err != nil {
@@ -611,7 +612,7 @@ func TestBatch(t *testing.T) {
 		t.Fatal("create table:", err)
 	}
 
-	batch := session.NewBatch(LoggedBatch)
+	batch := session.Batch(LoggedBatch)
 	for i := 0; i < 100; i++ {
 		batch.Query(`INSERT INTO batch_table (id) VALUES (?)`, i)
 	}
@@ -643,9 +644,9 @@ func TestUnpreparedBatch(t *testing.T) {
 
 	var batch *Batch
 	if session.cfg.ProtoVersion == 2 {
-		batch = session.NewBatch(CounterBatch)
+		batch = session.Batch(CounterBatch)
 	} else {
-		batch = session.NewBatch(UnloggedBatch)
+		batch = session.Batch(UnloggedBatch)
 	}
 
 	for i := 0; i < 100; i++ {
@@ -684,7 +685,7 @@ func TestBatchLimit(t *testing.T) {
 		t.Fatal("create table:", err)
 	}
 
-	batch := session.NewBatch(LoggedBatch)
+	batch := session.Batch(LoggedBatch)
 	for i := 0; i < 65537; i++ {
 		batch.Query(`INSERT INTO batch_table2 (id) VALUES (?)`, i)
 	}
@@ -738,7 +739,7 @@ func TestTooManyQueryArgs(t *testing.T) {
 		t.Fatal("'`SELECT * FROM too_many_query_args WHERE id = ?`, 1, 2' should return an error")
 	}
 
-	batch := session.NewBatch(UnloggedBatch)
+	batch := session.Batch(UnloggedBatch)
 	batch.Query("INSERT INTO too_many_query_args (id, value) VALUES (?, ?)", 1, 2, 3)
 	err = session.ExecuteBatch(batch)
 
@@ -770,7 +771,7 @@ func TestNotEnoughQueryArgs(t *testing.T) {
 		t.Fatal("'`SELECT * FROM not_enough_query_args WHERE id = ? and cluster = ?`, 1' should return an error")
 	}
 
-	batch := session.NewBatch(UnloggedBatch)
+	batch := session.Batch(UnloggedBatch)
 	batch.Query("INSERT INTO not_enough_query_args (id, cluster, value) VALUES (?, ?, ?)", 1, 2)
 	err = session.ExecuteBatch(batch)
 
@@ -1392,7 +1393,7 @@ func TestBatchQueryInfo(t *testing.T) {
 		return values, nil
 	}
 
-	batch := session.NewBatch(LoggedBatch)
+	batch := session.Batch(LoggedBatch)
 	batch.Bind("INSERT INTO batch_query_info (id, cluster, value) VALUES (?, ?,?)", write)
 
 	if err := session.ExecuteBatch(batch); err != nil {
@@ -1520,7 +1521,7 @@ func TestPrepare_ReprepareBatch(t *testing.T) {
 	}
 
 	stmt, conn := injectInvalidPreparedStatement(t, session, "test_reprepare_statement_batch")
-	batch := session.NewBatch(UnloggedBatch)
+	batch := session.Batch(UnloggedBatch)
 	batch.Query(stmt, "bar")
 	if err := conn.executeBatch(ctx, batch).Close(); err != nil {
 		t.Fatalf("Failed to execute query for reprepare statement: %v", err)
@@ -1904,7 +1905,7 @@ func TestBatchStats(t *testing.T) {
 		t.Fatalf("failed to create table with error '%v'", err)
 	}
 
-	b := session.NewBatch(LoggedBatch)
+	b := session.Batch(LoggedBatch)
 	b.Query("INSERT INTO batchStats (id) VALUES (?)", 1)
 	b.Query("INSERT INTO batchStats (id) VALUES (?)", 2)
 
@@ -1947,7 +1948,7 @@ func TestBatchObserve(t *testing.T) {
 
 	var observedBatch *observation
 
-	batch := session.NewBatch(LoggedBatch)
+	batch := session.Batch(LoggedBatch)
 	batch.Observer(funcBatchObserver(func(ctx context.Context, o ObservedBatch) {
 		if observedBatch != nil {
 			t.Fatal("batch observe called more than once")
@@ -3286,7 +3287,7 @@ func TestUnsetColBatch(t *testing.T) {
 		t.Fatalf("failed to create table with error '%v'", err)
 	}
 
-	b := session.NewBatch(LoggedBatch)
+	b := session.Batch(LoggedBatch)
 	b.Query("INSERT INTO gocql_test.batchUnsetInsert(id, my_int, my_text) VALUES (?,?,?)", 1, 1, UnsetValue)
 	b.Query("INSERT INTO gocql_test.batchUnsetInsert(id, my_int, my_text) VALUES (?,?,?)", 1, UnsetValue, "")
 	b.Query("INSERT INTO gocql_test.batchUnsetInsert(id, my_int, my_text) VALUES (?,?,?)", 2, 2, UnsetValue)
@@ -3303,7 +3304,6 @@ func TestUnsetColBatch(t *testing.T) {
 	}
 	var id, mInt, count int
 	var mText string
-
 	if err := session.Query("SELECT count(*) FROM gocql_test.batchUnsetInsert;").Scan(&count); err != nil {
 		t.Fatalf("Failed to select with err: %v", err)
 	} else if count != 2 {
@@ -3336,5 +3336,48 @@ func TestQuery_NamedValues(t *testing.T) {
 	var value string
 	if err := session.Query("SELECT VALUE from gocql_test.named_query WHERE id = :id", NamedValue("id", 1)).Scan(&value); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestQuery_SetHost(t *testing.T) {
+	// This test ensures that queries are sent to the specified host only
+
+	session := createSession(t)
+	defer session.Close()
+
+	hosts, err := session.GetHosts()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, expectedHost := range hosts {
+		const iterations = 5
+		for i := 0; i < iterations; i++ {
+			var actualHostID string
+			err := session.Query("SELECT host_id FROM system.local").
+				SetHost(expectedHost).
+				Scan(&actualHostID)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if expectedHost.HostID() != actualHostID {
+				t.Fatalf("Expected query to be executed on host %s, but it was executed on %s",
+					expectedHost.HostID(),
+					actualHostID,
+				)
+			}
+		}
+	}
+
+	// ensuring that the driver properly handles the case
+	// when specified host for the query is down
+	host := hosts[0]
+	host.state = NodeDown
+	err = session.Query("SELECT host_id FROM system.local").
+		SetHost(host).
+		Exec()
+	if !errors.Is(err, ErrNoConnections) {
+		t.Fatalf("Expected error to be: %v, but got %v", ErrNoConnections, err)
 	}
 }

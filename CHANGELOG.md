@@ -8,11 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SetHost API for Query (CASSGO-4)
+
 ### Changed
 
 - Don't restrict server authenticator unless PasswordAuthentictor.AllowedAuthenticators is provided (CASSGO-19)
 
 - Remove global NewBatch function (CASSGO-15)
+
+- Detailed description for NumConns (CASSGO-3)
+
+- Change Batch API to be consistent with Query() (CASSGO-7)
 
 ### Fixed
 

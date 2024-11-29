@@ -168,6 +168,7 @@ const (
 	flagGlobalTableSpec int = 0x01
 	flagHasMorePages    int = 0x02
 	flagNoMetaData      int = 0x04
+	flagMetaDataChanged int = 0x08
 
 	// query flags
 	flagValues                byte = 0x01
@@ -1017,6 +1018,8 @@ type resultMetadata struct {
 	// it is at minimum len(columns) but may be larger, for instance when a column
 	// is a UDT or tuple.
 	actualColCount int
+
+	newMetadataID []byte
 }
 
 func (r *resultMetadata) morePages() bool {
@@ -1058,6 +1061,10 @@ func (f *framer) parseResultMetadata() resultMetadata {
 
 	if meta.flags&flagHasMorePages == flagHasMorePages {
 		meta.pagingState = copyBytes(f.readBytes())
+	}
+
+	if meta.flags&flagMetaDataChanged == flagMetaDataChanged {
+		meta.newMetadataID = copyBytes(f.readBytes())
 	}
 
 	if meta.flags&flagNoMetaData == flagNoMetaData {
@@ -1164,17 +1171,23 @@ func (f *framer) parseResultSetKeyspace() frame {
 type resultPreparedFrame struct {
 	frameHeader
 
-	preparedID []byte
-	reqMeta    preparedMetadata
-	respMeta   resultMetadata
+	preparedID       []byte
+	resultMetadataID []byte
+	reqMeta          preparedMetadata
+	respMeta         resultMetadata
 }
 
 func (f *framer) parseResultPrepared() frame {
 	frame := &resultPreparedFrame{
 		frameHeader: *f.header,
 		preparedID:  f.readShortBytes(),
-		reqMeta:     f.parsePreparedMetadata(),
 	}
+
+	if f.proto > protoVersion4 {
+		frame.resultMetadataID = copyBytes(f.readShortBytes())
+	}
+
+	frame.reqMeta = f.parsePreparedMetadata()
 
 	if f.proto < protoVersion2 {
 		return frame
@@ -1604,6 +1617,9 @@ type writeExecuteFrame struct {
 
 	// v4+
 	customPayload map[string][]byte
+
+	// v5+
+	resultMetadataID []byte
 }
 
 func (e *writeExecuteFrame) String() string {
@@ -1611,16 +1627,21 @@ func (e *writeExecuteFrame) String() string {
 }
 
 func (e *writeExecuteFrame) buildFrame(fr *framer, streamID int) error {
-	return fr.writeExecuteFrame(streamID, e.preparedID, &e.params, &e.customPayload)
+	return fr.writeExecuteFrame(streamID, e.preparedID, e.resultMetadataID, &e.params, &e.customPayload)
 }
 
-func (f *framer) writeExecuteFrame(streamID int, preparedID []byte, params *queryParams, customPayload *map[string][]byte) error {
+func (f *framer) writeExecuteFrame(streamID int, preparedID, preparedMetadataID []byte, params *queryParams, customPayload *map[string][]byte) error {
 	if len(*customPayload) > 0 {
 		f.payload()
 	}
 	f.writeHeader(f.flags, opExecute, streamID)
 	f.writeCustomPayload(customPayload)
 	f.writeShortBytes(preparedID)
+
+	if f.proto > protoVersion4 {
+		f.writeShortBytes(preparedMetadataID)
+	}
+
 	if f.proto > protoVersion1 {
 		f.writeQueryParams(params)
 	} else {

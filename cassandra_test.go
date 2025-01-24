@@ -945,6 +945,7 @@ func TestMapScan(t *testing.T) {
 }
 
 func TestSliceMap(t *testing.T) {
+	t.Fatal("FAILED FOR TESTING PURPOSE")
 	session := createSession(t)
 	defer session.Close()
 	if err := createTable(session, `CREATE TABLE gocql_test.slice_map_table (

@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- SetHost API for Query (CASSGO-4)
+- SetHostID() API for Query (CASSGO-4)
 
 ### Changed
 

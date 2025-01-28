@@ -41,7 +41,7 @@ type ExecutableQuery interface {
 	Keyspace() string
 	Table() string
 	IsIdempotent() bool
-	GetHost() *HostInfo
+	GetHostID() string
 
 	withContext(context.Context) ExecutableQuery
 
@@ -86,12 +86,17 @@ func (q *queryExecutor) speculate(ctx context.Context, qry ExecutableQuery, sp S
 func (q *queryExecutor) executeQuery(qry ExecutableQuery) (*Iter, error) {
 	var hostIter NextHost
 
-	// checking if the host is specified for the query,
-	// if it is, the query should be executed at the specified host
-	host := qry.GetHost()
-	if host != nil {
+	// check if the host id is specified for the query,
+	// if it is, the query should be executed at the corresponding host.
+	if hostID := qry.GetHostID(); hostID != "" {
+		pool, ok := q.pool.getPoolByHostID(hostID)
+		if !ok || !pool.host.IsUp() {
+			return &Iter{err: ErrNoConnections}, nil
+		}
 		hostIter = func() SelectedHost {
-			return (*selectedHost)(host)
+			// forcing hostIter to always return the same host
+			// it makes any retries and speculative executions run on the specified host
+			return (*selectedHost)(pool.host)
 		}
 	}
 
@@ -104,7 +109,7 @@ func (q *queryExecutor) executeQuery(qry ExecutableQuery) (*Iter, error) {
 	// check if the query is not marked as idempotent, if
 	// it is, we force the policy to NonSpeculative
 	sp := qry.speculativeExecutionPolicy()
-	if host != nil || !qry.IsIdempotent() || sp.Attempts() == 0 {
+	if !qry.IsIdempotent() || sp.Attempts() == 0 {
 		return q.do(qry.Context(), qry, hostIter), nil
 	}
 
@@ -145,17 +150,12 @@ func (q *queryExecutor) executeQuery(qry ExecutableQuery) (*Iter, error) {
 func (q *queryExecutor) do(ctx context.Context, qry ExecutableQuery, hostIter NextHost) *Iter {
 	selectedHost := hostIter()
 	rt := qry.retryPolicy()
-	specifiedHost := qry.GetHost()
 
 	var lastErr error
 	var iter *Iter
 	for selectedHost != nil {
 		host := selectedHost.Info()
-		if specifiedHost != nil && host != nil && !host.IsUp() {
-			return &Iter{err: ErrNoConnections}
-		}
-
-		if (host == nil || !host.IsUp()) && specifiedHost == nil {
+		if host == nil || !host.IsUp() {
 			selectedHost = hostIter()
 			continue
 		}
@@ -189,7 +189,7 @@ func (q *queryExecutor) do(ctx context.Context, qry ExecutableQuery, hostIter Ne
 		// or query is not idempotent or no retry policy defined
 		// Also, if there is specified host for the query to be executed on
 		// and query execution is failed we should exit
-		if iter.err == nil || specifiedHost != nil || !qry.IsIdempotent() || rt == nil {
+		if iter.err == nil || !qry.IsIdempotent() || rt == nil {
 			return iter
 		}
 

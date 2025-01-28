@@ -456,6 +456,7 @@ func (s *Session) Query(stmt string, values ...interface{}) *Query {
 	qry.session = s
 	qry.stmt = stmt
 	qry.values = values
+	qry.hostID = ""
 	qry.defaultsFromSession()
 	return qry
 }
@@ -950,9 +951,9 @@ type Query struct {
 	// routingInfo is a pointer because Query can be copied and copyable struct can't hold a mutex.
 	routingInfo *queryRoutingInfo
 
-	// host specifies the host on which the query should be executed.
+	// hostID specifies the host on which the query should be executed.
 	// If it is nil, then the host is picked by HostSelectionPolicy
-	host *HostInfo
+	hostID string
 }
 
 type queryRoutingInfo struct {
@@ -1446,16 +1447,20 @@ func (q *Query) releaseAfterExecution() {
 	q.decRefCount()
 }
 
-// SetHosts allows to define on which host the query should be executed.
-// If host == nil, then the HostSelectionPolicy will be used to pick a host.
-func (q *Query) SetHost(host *HostInfo) *Query {
-	q.host = host
+// SetHostID allows to define on which host the query should be executed.
+// If hostID is not set, then the HostSelectionPolicy will be used to pick a host.
+// It is recommended to get host id from HostInfo.HostID(), but it is not required.
+// It is strongly recommended to use WithContext() with this option because
+// if the specified host goes down during execution, the driver will try to send the query to this host until it succeeds
+// which may lead to an endless execution.
+func (q *Query) SetHostID(hostID string) *Query {
+	q.hostID = hostID
 	return q
 }
 
-// GetHost returns host on which query should be executed.
-func (q *Query) GetHost() *HostInfo {
-	return q.host
+// GetHostID returns id of the host on which query should be executed.
+func (q *Query) GetHostID() string {
+	return q.hostID
 }
 
 // Iter represents an iterator that can be used to iterate over all rows that
@@ -2073,8 +2078,9 @@ func (b *Batch) releaseAfterExecution() {
 	// that would race with speculative executions.
 }
 
-func (b *Batch) GetHost() *HostInfo {
-	return nil
+// GetHostID satisfies ExecutableQuery interface but does noop.
+func (b *Batch) GetHostID() string {
+	return ""
 }
 
 type BatchType byte

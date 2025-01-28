@@ -3358,12 +3358,12 @@ func TestQuery_SetHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	const iterations = 5
 	for _, expectedHost := range hosts {
-		const iterations = 5
 		for i := 0; i < iterations; i++ {
 			var actualHostID string
 			err := session.Query("SELECT host_id FROM system.local").
-				SetHost(expectedHost).
+				SetHostID(expectedHost.HostID()).
 				Scan(&actualHostID)
 			if err != nil {
 				t.Fatal(err)
@@ -3378,12 +3378,22 @@ func TestQuery_SetHost(t *testing.T) {
 		}
 	}
 
+	// ensuring properly handled invalid host id
+	err = session.Query("SELECT host_id FROM system.local").
+		SetHostID("[invalid]").
+		Exec()
+	if !errors.Is(err, ErrNoConnections) {
+		t.Fatalf("Expected error to be: %v, but got %v", ErrNoConnections, err)
+	}
+
 	// ensuring that the driver properly handles the case
 	// when specified host for the query is down
 	host := hosts[0]
-	host.state = NodeDown
+	pool, _ := session.pool.getPoolByHostID(host.HostID())
+	// simulating specified host is down
+	pool.host.setState(NodeDown)
 	err = session.Query("SELECT host_id FROM system.local").
-		SetHost(host).
+		SetHostID(host.HostID()).
 		Exec()
 	if !errors.Is(err, ErrNoConnections) {
 		t.Fatalf("Expected error to be: %v, but got %v", ErrNoConnections, err)

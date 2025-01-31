@@ -952,7 +952,7 @@ type Query struct {
 	routingInfo *queryRoutingInfo
 
 	// hostID specifies the host on which the query should be executed.
-	// If it is nil, then the host is picked by HostSelectionPolicy
+	// If it is empty, then the host is picked by HostSelectionPolicy
 	hostID string
 }
 
@@ -1453,6 +1453,7 @@ func (q *Query) releaseAfterExecution() {
 // It is strongly recommended to use WithContext() with this option because
 // if the specified host goes down during execution, the driver will try to send the query to this host until it succeeds
 // which may lead to an endless execution.
+// Setting hostID to empty restores behavior to default.
 func (q *Query) SetHostID(hostID string) *Query {
 	q.hostID = hostID
 	return q

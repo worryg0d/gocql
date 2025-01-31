@@ -8,9 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SetHostID() API for Query (CASSGO-4)
+
 ### Changed
 
 - Don't restrict server authenticator unless PasswordAuthentictor.AllowedAuthenticators is provided (CASSGO-19)
+
+- Cleanup of deprecated elements (CASSGO-12)
 
 - Remove global NewBatch function (CASSGO-15)
 
@@ -20,10 +24,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Remove deprecated global logger (CASSGO-24)
 
+- Bumped actions/upload-artifact and actions/cache versions to v4 in CI workflow (CASSGO-48)
+
+- Keep nil slices in MapScan (CASSGO-44)
+
+- Improve error messages for marshalling (CASSGO-38)
 ### Fixed
 
 - Retry policy now takes into account query idempotency (CASSGO-27)
+
 - Don't return error to caller with RetryType Ignore (CASSGO-28)
+- The marshalBigInt return 8 bytes slice in all cases except for big.Int,
+  which returns a variable length slice, but should be 8 bytes slice as well (CASSGO-2)
+
+- Skip metadata only if the prepared result includes metadata (CASSGO-40)
+
+- Don't panic in MapExecuteBatchCAS if no `[applied]` column is returned (CASSGO-42)
 
 ## [1.7.0] - 2024-09-23
 

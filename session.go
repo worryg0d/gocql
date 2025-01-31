@@ -456,6 +456,7 @@ func (s *Session) Query(stmt string, values ...interface{}) *Query {
 	qry.session = s
 	qry.stmt = stmt
 	qry.values = values
+	qry.hostID = ""
 	qry.defaultsFromSession()
 	return qry
 }
@@ -785,7 +786,7 @@ func (s *Session) ExecuteBatchCAS(batch *Batch, dest ...interface{}) (applied bo
 		iter.Scan(&applied)
 	}
 
-	return applied, iter, nil
+	return applied, iter, iter.err
 }
 
 // MapExecuteBatchCAS executes a batch operation much like ExecuteBatchCAS,
@@ -798,8 +799,14 @@ func (s *Session) MapExecuteBatchCAS(batch *Batch, dest map[string]interface{}) 
 		return false, nil, err
 	}
 	iter.MapScan(dest)
-	applied = dest["[applied]"].(bool)
-	delete(dest, "[applied]")
+	if iter.err != nil {
+		return false, iter, iter.err
+	}
+	// check if [applied] was returned, otherwise it might not be CAS
+	if _, ok := dest["[applied]"]; ok {
+		applied = dest["[applied]"].(bool)
+		delete(dest, "[applied]")
+	}
 
 	// we usually close here, but instead of closing, just returin an error
 	// if MapScan failed. Although Close just returns err, using Close
@@ -943,6 +950,10 @@ type Query struct {
 
 	// routingInfo is a pointer because Query can be copied and copyable struct can't hold a mutex.
 	routingInfo *queryRoutingInfo
+
+	// hostID specifies the host on which the query should be executed.
+	// If it is empty, then the host is picked by HostSelectionPolicy
+	hostID string
 }
 
 type queryRoutingInfo struct {
@@ -1387,8 +1398,14 @@ func (q *Query) MapScanCAS(dest map[string]interface{}) (applied bool, err error
 		return false, err
 	}
 	iter.MapScan(dest)
-	applied = dest["[applied]"].(bool)
-	delete(dest, "[applied]")
+	if iter.err != nil {
+		return false, iter.err
+	}
+	// check if [applied] was returned, otherwise it might not be CAS
+	if _, ok := dest["[applied]"]; ok {
+		applied = dest["[applied]"].(bool)
+		delete(dest, "[applied]")
+	}
 
 	return applied, iter.Close()
 }
@@ -1428,6 +1445,23 @@ func (q *Query) borrowForExecution() {
 
 func (q *Query) releaseAfterExecution() {
 	q.decRefCount()
+}
+
+// SetHostID allows to define on which host the query should be executed.
+// If hostID is not set, then the HostSelectionPolicy will be used to pick a host.
+// It is recommended to get host id from HostInfo.HostID(), but it is not required.
+// It is strongly recommended to use WithContext() with this option because
+// if the specified host goes down during execution, the driver will try to send the query to this host until it succeeds
+// which may lead to an endless execution.
+// Setting hostID to empty restores behavior to default.
+func (q *Query) SetHostID(hostID string) *Query {
+	q.hostID = hostID
+	return q
+}
+
+// GetHostID returns id of the host on which query should be executed.
+func (q *Query) GetHostID() string {
+	return q.hostID
 }
 
 // Iter represents an iterator that can be used to iterate over all rows that
@@ -2045,6 +2079,11 @@ func (b *Batch) releaseAfterExecution() {
 	// that would race with speculative executions.
 }
 
+// GetHostID satisfies ExecutableQuery interface but does noop.
+func (b *Batch) GetHostID() string {
+	return ""
+}
+
 type BatchType byte
 
 const (
@@ -2175,6 +2214,11 @@ func (t *traceWriter) Trace(traceId []byte) {
 	if err := iter.Close(); err != nil {
 		fmt.Fprintln(t.w, "Error:", err)
 	}
+}
+
+// GetHosts return a list of hosts in the ring the driver knows of.
+func (s *Session) GetHosts() []*HostInfo {
+	return s.ring.allHosts()
 }
 
 type ObservedQuery struct {

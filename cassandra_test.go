@@ -3347,7 +3347,7 @@ func TestQuery_NamedValues(t *testing.T) {
 	}
 }
 
-func TestQuery_SetHost(t *testing.T) {
+func TestQuery_SetHostID(t *testing.T) {
 	// This test ensures that queries are sent to the specified host only
 
 	session := createSession(t)

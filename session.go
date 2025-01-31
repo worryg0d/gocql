@@ -2215,13 +2215,9 @@ func (t *traceWriter) Trace(traceId []byte) {
 	}
 }
 
-// GetHosts returns a list of hosts found via queries to system.local and system.peers
-func (s *Session) GetHosts() ([]*HostInfo, error) {
-	hosts, _, err := s.hostSource.GetHosts()
-	if err != nil {
-		return nil, err
-	}
-	return hosts, nil
+// GetHosts return a list of hosts in the ring the driver knows of.
+func (s *Session) GetHosts() []*HostInfo {
+	return s.ring.allHosts()
 }
 
 type ObservedQuery struct {

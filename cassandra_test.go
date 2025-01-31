@@ -3353,10 +3353,7 @@ func TestQuery_SetHost(t *testing.T) {
 	session := createSession(t)
 	defer session.Close()
 
-	hosts, err := session.GetHosts()
-	if err != nil {
-		t.Fatal(err)
-	}
+	hosts := session.GetHosts()
 
 	const iterations = 5
 	for _, expectedHost := range hosts {
@@ -3379,7 +3376,7 @@ func TestQuery_SetHost(t *testing.T) {
 	}
 
 	// ensuring properly handled invalid host id
-	err = session.Query("SELECT host_id FROM system.local").
+	err := session.Query("SELECT host_id FROM system.local").
 		SetHostID("[invalid]").
 		Exec()
 	if !errors.Is(err, ErrNoConnections) {

@@ -109,7 +109,7 @@ func (q *queryExecutor) executeQuery(qry ExecutableQuery) (*Iter, error) {
 	// check if the query is not marked as idempotent, if
 	// it is, we force the policy to NonSpeculative
 	sp := qry.speculativeExecutionPolicy()
-	if !qry.IsIdempotent() || sp.Attempts() == 0 {
+	if qry.GetHostID() != "" || !qry.IsIdempotent() || sp.Attempts() == 0 {
 		return q.do(qry.Context(), qry, hostIter), nil
 	}
 
@@ -187,8 +187,6 @@ func (q *queryExecutor) do(ctx context.Context, qry ExecutableQuery, hostIter Ne
 
 		// Exit if the query was successful
 		// or query is not idempotent or no retry policy defined
-		// Also, if there is specified host for the query to be executed on
-		// and query execution is failed we should exit
 		if iter.err == nil || !qry.IsIdempotent() || rt == nil {
 			return iter
 		}

@@ -89,13 +89,13 @@ func (q *queryExecutor) executeQuery(qry ExecutableQuery) (*Iter, error) {
 	// check if the host id is specified for the query,
 	// if it is, the query should be executed at the corresponding host.
 	if hostID := qry.GetHostID(); hostID != "" {
-		pool, ok := q.pool.getPoolByHostID(hostID)
-		if !ok || !pool.host.IsUp() {
-			return &Iter{err: ErrNoConnections}, nil
-		}
 		hostIter = func() SelectedHost {
-			// forcing hostIter to always return the same host
-			// it makes any retries and speculative executions run on the specified host
+			pool, ok := q.pool.getPoolByHostID(hostID)
+			// if the specified host is down
+			// we return nil to avoid endless query execution in queryExecutor.do()
+			if !ok || !pool.host.IsUp() {
+				return nil
+			}
 			return (*selectedHost)(pool.host)
 		}
 	}

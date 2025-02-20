@@ -32,7 +32,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"io"
 	"math"
 	"math/big"
@@ -3257,6 +3256,10 @@ func TestCreateSession_DontSwallowError(t *testing.T) {
 func TestControl_DiscoverProtocol(t *testing.T) {
 	cluster := createCluster()
 	cluster.ProtoVersion = 0
+	// Forcing to run this test without any compression.
+	// If compressor is presented, then CI will fail when snappy compression is enabled, since
+	// protocol v5 doesn't support it.
+	cluster.Compressor = nil
 
 	session, err := cluster.CreateSession()
 	if err != nil {

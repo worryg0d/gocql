@@ -1342,12 +1342,12 @@ func (srv *TestServer) process(conn net.Conn, reqFrame *framer) {
 		id := binary.BigEndian.Uint64(b)
 		// <query_parameters>
 		reqFrame.readConsistency() // <consistency>
-		var flags byte
+		var flags uint32
 		if srv.protocol > protoVersion4 {
 			ui := reqFrame.readInt()
-			flags = byte(ui)
+			flags = uint32(ui)
 		} else {
-			flags = reqFrame.readByte()
+			flags = uint32(reqFrame.readByte())
 		}
 		switch id {
 		case 1:
@@ -1444,7 +1444,6 @@ func TestConnProcessAllFramesInSingleSegment(t *testing.T) {
 			semaphore: make(chan struct{}, 1),
 			quit:      make(chan struct{}),
 		},
-		logger:       Logger,
 		writeTimeout: time.Second * 10,
 	}
 

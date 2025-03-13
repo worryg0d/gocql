@@ -3872,3 +3872,47 @@ func TestRoutingKeyCacheUsesOverriddenKeyspace(t *testing.T) {
 
 	session.Query("DROP KEYSPACE IF EXISTS gocql_test_routing_key_cache").Exec()
 }
+
+func TestVectorSupport(t *testing.T) {
+	session := createSession(t)
+	defer session.Close()
+
+	err := createTable(session, `CREATE TABLE IF NOT EXISTS test_vector (
+    id INT PRIMARY KEY,
+    embedding VECTOR<FLOAT, 3>
+);`)
+	require.NoError(t, err)
+
+	err = createTable(session, `CREATE CUSTOM INDEX IF NOT EXISTS test_vector_idx 
+		ON test_vector(embedding) 
+		USING 'StorageAttachedIndex';`,
+	)
+	require.NoError(t, err)
+
+	// Insert a vector
+	id := 1
+	vector := []float32{0.1, 0.2, 0.3}
+	query := "INSERT INTO test_vector (id, embedding) VALUES (?, ?)"
+	err = session.Query(query, id, vector).Exec()
+	require.NoError(t, err)
+
+	searchVector := []float32{0.1, 0.2, 0.3}
+	searchQuery := `
+		SELECT id, embedding
+		FROM test_vector
+		WHERE id = ?
+		ORDER BY embedding ANN OF ?
+		LIMIT 1
+	`
+	iter := session.Query(searchQuery, id, searchVector).Iter()
+
+	var retrievedID int
+	var retrievedVector []float32
+
+	for iter.Scan(&retrievedID, &retrievedVector) {
+		require.Equal(t, id, retrievedID)
+		require.Equal(t, vector, retrievedVector)
+	}
+
+	require.NoError(t, iter.Close())
+}

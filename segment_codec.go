@@ -162,13 +162,13 @@ func (sc *segmentCodec) decodeCompressedSegment(r io.Reader) ([]byte, bool, erro
 		if err != nil {
 			return nil, false, err
 		}
+		// Verify that the decompressed length matches the expected length
+		if uint32(len(uncompressedPayload)) != uint32(header.uncompressedPayloadLength) {
+			return nil, false, fmt.Errorf("gocql: length mismatch after payload decompressing, got %d, expected %d", len(uncompressedPayload), header.uncompressedPayloadLength)
+		}
 	} else {
 		// in case when the segment was not compressed because compression was not worth it
 		uncompressedPayload = compressedPayload
-	}
-
-	if uint32(len(uncompressedPayload)) != uint32(header.uncompressedPayloadLength) {
-		return nil, false, fmt.Errorf("gocql: length mismatch after payload decompressing, got %d, expected %d", len(uncompressedPayload), header.uncompressedPayloadLength)
 	}
 
 	return uncompressedPayload, header.isSelfContained, nil

@@ -796,18 +796,7 @@ func (c *Conn) releaseStream(call *callReq) {
 }
 
 func (c *Conn) recvSegment(ctx context.Context) error {
-	var (
-		frame           []byte
-		isSelfContained bool
-		err             error
-	)
-
-	// Read frame based on compression
-	if c.compressor != nil {
-		frame, isSelfContained, err = readCompressedSegment(c.r, c.compressor)
-	} else {
-		frame, isSelfContained, err = readUncompressedSegment(c.r)
-	}
+	frame, isSelfContained, err := c.session.segmentCodec.decode(c.r)
 	if err != nil {
 		return err
 	}
@@ -839,20 +828,10 @@ func (c *Conn) recvSegment(ctx context.Context) error {
 // It reads data until the bytesToRead is reached.
 // If Conn.compressor is not nil, it processes Compressed Format segments.
 func (c *Conn) recvPartialFrames(dst *bytes.Buffer, bytesToRead int) error {
-	var (
-		read            int
-		frame           []byte
-		isSelfContained bool
-		err             error
-	)
+	var read int
 
 	for read != bytesToRead {
-		// Read frame based on compression
-		if c.compressor != nil {
-			frame, isSelfContained, err = readCompressedSegment(c.r, c.compressor)
-		} else {
-			frame, isSelfContained, err = readUncompressedSegment(c.r)
-		}
+		frame, isSelfContained, err := c.session.segmentCodec.decode(c.r)
 		if err != nil {
 			return fmt.Errorf("gocql: failed to read non self-contained frame: %w", err)
 		}

@@ -1171,6 +1171,8 @@ func (srv *TestServer) serve() {
 			break
 		}
 
+		segmentCodec := newSegmentCodec(nil)
+
 		go func(conn net.Conn) {
 			var startupCompleted bool
 			var useProtoV5 bool
@@ -1180,7 +1182,7 @@ func (srv *TestServer) serve() {
 				var reader io.Reader = conn
 
 				if useProtoV5 && startupCompleted {
-					frame, _, err := readUncompressedSegment(conn)
+					frame, _, err := segmentCodec.decode(conn)
 					if err != nil {
 						if errors.Is(err, io.EOF) {
 							return
@@ -1457,7 +1459,8 @@ finish:
 	}
 
 	if *useProtoV5 && *startupCompleted {
-		segment, err := newUncompressedSegment(respFrame.buf, true)
+		segmentCodec := newSegmentCodec(nil)
+		segment, err := segmentCodec.encode(respFrame.buf, true)
 		if err == nil {
 			_, err = conn.Write(segment)
 		}
@@ -1523,8 +1526,11 @@ func TestConnProcessAllFramesInSingleSegment(t *testing.T) {
 			quit:      make(chan struct{}),
 		},
 		writeTimeout: time.Second * 10,
-		session:      &Session{types: GlobalTypes},
-		logger:       &defaultLogger{},
+		session: &Session{
+			types:        GlobalTypes,
+			segmentCodec: newSegmentCodec(nil),
+		},
+		logger: &defaultLogger{},
 	}
 
 	call1 := &callReq{
@@ -1563,10 +1569,11 @@ func TestConnProcessAllFramesInSingleSegment(t *testing.T) {
 		buf = append(buf, framer1.buf...)
 		buf = append(buf, framer2.buf...)
 
-		uncompressedSegment, err := newUncompressedSegment(buf, true)
+		segmentCodec := newSegmentCodec(nil)
+		segment, err := segmentCodec.encode(buf, true)
 		require.NoError(t, err)
 
-		_, err = client.Write(uncompressedSegment)
+		_, err = client.Write(segment)
 		require.NoError(t, err)
 	}()
 

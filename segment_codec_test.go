@@ -29,9 +29,11 @@ package gocql
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"testing"
 
+	"github.com/apache/cassandra-gocql-driver/v2/lz4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +44,9 @@ type testMockedCompressor struct {
 
 	// invalidateDecodedDataLength allows to simulate data decoding invalidation
 	invalidateDecodedDataLength bool
+
+	// forceBiggerCompressedData allows to simulate compression that results in bigger data
+	forceBiggerCompressedData bool
 }
 
 func (m testMockedCompressor) Name() string {
@@ -52,6 +57,11 @@ func (m testMockedCompressor) AppendCompressed(_, src []byte) ([]byte, error) {
 	if m.expectedError != nil {
 		return nil, m.expectedError
 	}
+
+	if m.forceBiggerCompressedData {
+		return append([]byte{1}, src...), nil
+	}
+
 	return src, nil
 }
 
@@ -63,6 +73,10 @@ func (m testMockedCompressor) AppendDecompressed(_, src []byte, decompressedLeng
 	// simulating invalid size of decoded data
 	if m.invalidateDecodedDataLength {
 		return src[:decompressedLength-1], nil
+	}
+
+	if m.forceBiggerCompressedData {
+		return src[1:], nil
 	}
 
 	return src, nil
@@ -273,6 +287,266 @@ func Test_readCompressedFrame(t *testing.T) {
 				assert.True(t, selfContained)
 				assert.Equal(t, framer.buf, readFrame)
 			}
+		})
+	}
+}
+
+func Test_segmentCodec_encode_payloadSizeValidation(t *testing.T) {
+	codec := newSegmentCodec(nil)
+
+	// Test max valid payload
+	maxPayload := make([]byte, maxSegmentPayloadSize)
+	_, err := codec.encode(maxPayload, true)
+	require.NoError(t, err)
+
+	// Test exceeding max payload
+	oversizedPayload := make([]byte, maxSegmentPayloadSize+1)
+	_, err = codec.encode(oversizedPayload, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum segment size")
+}
+
+func Test_segmentCodec_encodeCompressedSegmentHeader(t *testing.T) {
+	tests := []struct {
+		name            string
+		compressedLen   int
+		uncompressedLen int
+		isSelfContained bool
+	}{
+		{
+			name:            "small payload self-contained",
+			compressedLen:   100,
+			uncompressedLen: 200,
+			isSelfContained: true,
+		},
+		{
+			name:            "small payload not self-contained",
+			compressedLen:   100,
+			uncompressedLen: 200,
+			isSelfContained: false,
+		},
+		{
+			name:            "max size payload",
+			compressedLen:   maxSegmentPayloadSize,
+			uncompressedLen: maxSegmentPayloadSize,
+			isSelfContained: true,
+		},
+		{
+			name:            "zero uncompressed length",
+			compressedLen:   150,
+			uncompressedLen: 0,
+			isSelfContained: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codec := newSegmentCodec(testMockedCompressor{})
+			dest := make([]byte, compressedHeaderSize)
+
+			codec.encodeCompressedSegmentHeader(tt.compressedLen, tt.uncompressedLen, tt.isSelfContained, dest)
+
+			header, err := codec.decodeCompressedSegmentHeader(bytes.NewReader(dest))
+			require.NoError(t, err)
+			assert.Equal(t, tt.compressedLen, header.payloadLength)
+			assert.Equal(t, tt.uncompressedLen, header.uncompressedPayloadLength)
+			assert.Equal(t, tt.isSelfContained, header.isSelfContained)
+		})
+	}
+}
+
+func Test_segmentCodec_encodeUncompressedSegmentHeader(t *testing.T) {
+	tests := []struct {
+		name            string
+		payloadLen      int
+		isSelfContained bool
+	}{
+		{
+			name:            "small payload self-contained",
+			payloadLen:      100,
+			isSelfContained: true,
+		},
+		{
+			name:            "small payload not self-contained",
+			payloadLen:      100,
+			isSelfContained: false,
+		},
+		{
+			name:            "max size payload",
+			payloadLen:      maxSegmentPayloadSize,
+			isSelfContained: true,
+		},
+		{
+			name:            "empty payload",
+			payloadLen:      0,
+			isSelfContained: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codec := newSegmentCodec(nil)
+			dest := make([]byte, uncompressedHeaderSize)
+
+			codec.encodeUncompressedSegmentHeader(tt.payloadLen, tt.isSelfContained, dest)
+
+			header, err := codec.decodeUncompressedSegmentHeader(bytes.NewReader(dest))
+			require.NoError(t, err)
+			assert.Equal(t, tt.payloadLen, header.payloadLength)
+			assert.Equal(t, tt.isSelfContained, header.isSelfContained)
+		})
+	}
+}
+
+func Test_segmentCodec_encodePayloadAndChecksum(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload []byte
+	}{
+		{
+			name:    "small payload",
+			payload: []byte("hello world"),
+		},
+		{
+			name:    "empty payload",
+			payload: []byte{},
+		},
+		{
+			name:    "large payload",
+			payload: bytes.Repeat([]byte("test"), maxSegmentPayloadSize/4),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codec := newSegmentCodec(nil)
+			dest := make([]byte, len(tt.payload)+crc32Size)
+
+			codec.encodePayloadAndChecksum(tt.payload, dest)
+
+			// Verify payload is copied correctly
+			assert.Equal(t, tt.payload, dest[:len(tt.payload)])
+
+			// Verify checksum
+			expectedCRC := Crc32(tt.payload)
+			actualCRC := binary.LittleEndian.Uint32(dest[len(tt.payload):])
+			assert.Equal(t, expectedCRC, actualCRC)
+		})
+	}
+}
+
+func Test_segmentCodec_encode_compressionWorthiness(t *testing.T) {
+	// Test that when compression results in larger data, uncompressed is sent
+	payload := []byte("small")
+
+	// Mock compressor that returns larger data
+	mockCompressor := testMockedCompressor{
+		forceBiggerCompressedData: true,
+	}
+	codec := newSegmentCodec(mockCompressor)
+
+	encoded, err := codec.encode(payload, true)
+	require.NoError(t, err)
+
+	reader := bytes.NewReader(encoded)
+
+	header, err := codec.decodeCompressedSegmentHeader(reader)
+	require.NoError(t, err)
+
+	// Since compression is not worthy, the header should indicate uncompressed segment
+	assert.Equal(t, len(payload), header.payloadLength)
+	assert.Equal(t, 0, header.uncompressedPayloadLength)
+	assert.True(t, header.isSelfContained)
+
+	// And payload should match original, so it wasn't actually compressed
+	decodedPayload, err := codec.decodePayload(reader, header)
+	require.NoError(t, err)
+	assert.Equal(t, payload, decodedPayload)
+}
+
+func Test_segmentCodec_roundtrip_uncompressed(t *testing.T) {
+	tests := []struct {
+		name            string
+		payload         []byte
+		isSelfContained bool
+	}{
+		{
+			name:            "small self-contained",
+			payload:         []byte("test payload"),
+			isSelfContained: true,
+		},
+		{
+			name:            "small not self-contained",
+			payload:         []byte("test payload"),
+			isSelfContained: false,
+		},
+		{
+			name:            "empty payload",
+			payload:         []byte{},
+			isSelfContained: true,
+		},
+		{
+			name:            "max size payload",
+			payload:         bytes.Repeat([]byte("x"), maxSegmentPayloadSize),
+			isSelfContained: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codec := newSegmentCodec(nil)
+
+			encoded, err := codec.encode(tt.payload, tt.isSelfContained)
+			require.NoError(t, err)
+
+			decoded, selfContained, err := codec.decode(bytes.NewReader(encoded))
+			require.NoError(t, err)
+			assert.Equal(t, tt.payload, decoded)
+			assert.Equal(t, tt.isSelfContained, selfContained)
+		})
+	}
+}
+
+func Test_segmentCodec_roundtrip_compressed(t *testing.T) {
+	tests := []struct {
+		name            string
+		payload         []byte
+		isSelfContained bool
+	}{
+		{
+			name:            "small self-contained",
+			payload:         []byte("test payload"),
+			isSelfContained: true,
+		},
+		{
+			name:            "small not self-contained",
+			payload:         []byte("test payload"),
+			isSelfContained: false,
+		},
+		{
+			name:            "empty payload",
+			payload:         []byte{},
+			isSelfContained: true,
+		},
+		{
+			name:            "large payload",
+			payload:         bytes.Repeat([]byte("test data "), 1000),
+			isSelfContained: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// using real lz4 compressor for this test
+			codec := newSegmentCodec(lz4.LZ4Compressor{})
+
+			encoded, err := codec.encode(tt.payload, tt.isSelfContained)
+			require.NoError(t, err)
+
+			decoded, selfContained, err := codec.decode(bytes.NewReader(encoded))
+			require.NoError(t, err)
+			assert.Equal(t, tt.payload, decoded)
+			assert.Equal(t, tt.isSelfContained, selfContained)
 		})
 	}
 }

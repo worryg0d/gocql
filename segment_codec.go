@@ -11,8 +11,8 @@ import (
 const (
 	maxSegmentPayloadSize = 1<<17 - 1
 
-	compressedHeaderSize   = 3
-	uncompressedHeaderSize = 5
+	compressedHeaderSize   = 5 + crc24Size
+	uncompressedHeaderSize = 3 + crc24Size
 
 	crc24Size = 3
 	crc32Size = 4
@@ -84,58 +84,66 @@ func (sc *segmentCodec) encodeCompressedSegment(payload []byte, isSelfContained 
 		combined |= 1 << 34
 	}
 
-	segment := make([]byte, 0, compressedHeaderSize+crc24Size+compressedLen+crc32Size)
+	segmentBuf := make([]byte, compressedHeaderSize+compressedLen+crc32Size)
 
-	var headerBuf [8]byte
-	binary.LittleEndian.PutUint64(headerBuf[:], combined)
-	segment = append(segment, headerBuf[:5]...)
+	sc.encodeCompressedSegmentHeader(compressedLen, uncompressedLen, isSelfContained, segmentBuf)
+	sc.encodePayloadAndChecksum(compressed, segmentBuf[compressedHeaderSize:])
 
-	headerChecksum := Crc24(segment[:5])
-	segment = append(segment,
-		byte(headerChecksum),
-		byte(headerChecksum>>8),
-		byte(headerChecksum>>16),
-	)
+	return segmentBuf, nil
+}
 
-	segment = append(segment, compressed...)
+// encodeCompressedSegmentHeader encodes the compressed segment header into the provided destination slice.
+// It assumes that dest has enough space to hold the header.
+func (sc *segmentCodec) encodeCompressedSegmentHeader(compressedLen, uncompressedLen int, isSelfContained bool, dest []byte) {
+	combined := uint64(compressedLen) | uint64(uncompressedLen)<<17
+	if isSelfContained {
+		combined |= 1 << 34
+	}
 
-	payloadChecksum := Crc32(compressed)
-	binary.LittleEndian.PutUint32(headerBuf[:], payloadChecksum)
-	segment = append(segment, headerBuf[:4]...)
+	binary.LittleEndian.PutUint64(dest[:], combined)
 
-	return segment, nil
+	headerCRC24 := Crc24(dest[:5])
+	dest[5] = byte(headerCRC24)
+	dest[6] = byte(headerCRC24 >> 8)
+	dest[7] = byte(headerCRC24 >> 16)
 }
 
 func (sc *segmentCodec) encodeUncompressedSegment(payload []byte, isSelfContained bool) ([]byte, error) {
 	payloadLen := len(payload)
 
+	segmentBuf := make([]byte, uncompressedHeaderSize+payloadLen+crc32Size)
+
+	sc.encodeUncompressedSegmentHeader(payloadLen, isSelfContained, segmentBuf)
+	sc.encodePayloadAndChecksum(payload, segmentBuf[uncompressedHeaderSize:])
+
+	return segmentBuf, nil
+}
+
+// encodeUncompressedSegmentHeader encodes the uncompressed segment header into the provided destination slice.
+// It assumes that dest has enough space to hold the header.
+func (sc *segmentCodec) encodeUncompressedSegmentHeader(payloadLen int, isSelfContained bool, dest []byte) {
 	headerInt := uint32(payloadLen)
 	if isSelfContained {
 		headerInt |= 1 << 17
 	}
 
-	segment := make([]byte, 0, uncompressedHeaderSize+crc24Size+payloadLen+crc32Size)
-	segment = append(segment,
-		byte(headerInt),
-		byte(headerInt>>8),
-		byte(headerInt>>16),
-	)
+	dest[0] = byte(headerInt)
+	dest[1] = byte(headerInt >> 8)
+	dest[2] = byte(headerInt >> 16)
 
-	crc := Crc24(segment[:3])
-	segment = append(segment,
-		byte(crc),
-		byte(crc>>8),
-		byte(crc>>16),
-	)
+	crc := Crc24(dest[:3])
+	dest[3] = byte(crc)
+	dest[4] = byte(crc >> 8)
+	dest[5] = byte(crc >> 16)
+}
 
-	segment = append(segment, payload...)
-
+// encodePayloadAndChecksum encodes the payload and its CRC32 checksum into the provided destination slice.
+// It assumes that dest has enough space to hold the payload and checksum.
+// Starting from dest[0], it writes the payload followed by its CRC32 checksum.
+func (sc *segmentCodec) encodePayloadAndChecksum(payload []byte, dest []byte) {
 	payloadCRC32 := Crc32(payload)
-	var buf [4]byte
-	binary.LittleEndian.PutUint32(buf[:], payloadCRC32)
-	segment = append(segment, buf[:]...)
-
-	return segment, nil
+	copy(dest, payload)
+	binary.LittleEndian.PutUint32(dest[len(payload):], payloadCRC32)
 }
 
 func (sc *segmentCodec) decode(r io.Reader) ([]byte, bool, error) {

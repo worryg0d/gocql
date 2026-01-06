@@ -102,6 +102,8 @@ type Session struct {
 	isInitialized bool
 
 	logger StructuredLogger
+
+	schemaUpdateListener SchemaChangeListener
 }
 
 func addrsToHosts(addrs []string, defaultPort int, logger StructuredLogger) ([]*HostInfo, error) {
@@ -177,6 +179,7 @@ func NewSession(cfg ClusterConfig) (*Session, error) {
 	s.connectObserver = cfg.ConnectObserver
 	s.frameObserver = cfg.FrameHeaderObserver
 	s.streamObserver = cfg.StreamObserver
+	s.schemaUpdateListener = cfg.Events.SchemaUpdateListener
 
 	//Check the TLS Config before trying to connect to anything external
 	connCfg, err := connConfig(&s.cfg)

@@ -141,19 +141,39 @@ func (s *Session) handleSchemaEvent(frames []frame) {
 			s.handleKeyspaceChange(f.keyspace, f.change)
 		case *schemaChangeTable:
 			s.schemaDescriber.clearSchema(f.keyspace)
+
+			if s.schemaUpdateListener != nil {
+				s.schemaUpdateListener.OnTableUpdate(TableUpdateEvent{Keyspace: f.keyspace, Table: f.object, Change: f.change})
+			}
 		case *schemaChangeAggregate:
 			s.schemaDescriber.clearSchema(f.keyspace)
+
+			if s.schemaUpdateListener != nil {
+				s.schemaUpdateListener.OnAggregateUpdate(AggregateUpdateEvent{Keyspace: f.keyspace, Aggregate: f.name, Change: f.change})
+			}
 		case *schemaChangeFunction:
 			s.schemaDescriber.clearSchema(f.keyspace)
+
+			if s.schemaUpdateListener != nil {
+				s.schemaUpdateListener.OnFunctionUpdate(FunctionUpdateEvent{Keyspace: f.keyspace, Function: f.name, Change: f.change})
+			}
 		case *schemaChangeType:
 			s.schemaDescriber.clearSchema(f.keyspace)
+
+			if s.schemaUpdateListener != nil {
+				s.schemaUpdateListener.OnTypeUpdate(TypeUpdateEvent{Keyspace: f.keyspace, Type: f.object, Change: f.change})
+			}
 		}
 	}
 }
 
 func (s *Session) handleKeyspaceChange(keyspace, change string) {
 	s.control.awaitSchemaAgreement()
-	s.policy.KeyspaceChanged(KeyspaceUpdateEvent{Keyspace: keyspace, Change: change})
+	event := KeyspaceUpdateEvent{Keyspace: keyspace, Change: change}
+	s.policy.KeyspaceChanged(event)
+	if s.schemaUpdateListener != nil {
+		s.schemaUpdateListener.OnKeyspaceUpdate(event)
+	}
 }
 
 // handleNodeEvent handles inbound status and topology change events.
@@ -234,6 +254,10 @@ func (s *Session) handleNodeUp(eventIp net.IP, eventPort int) {
 		time.Sleep(d)
 	}
 	s.startPoolFill(host)
+
+	// if s.nodeStateListener != nil {
+	// 	s.nodeStateListener.OnNodeUp(host)
+	// }
 }
 
 func (s *Session) startPoolFill(host *HostInfo) {
@@ -251,6 +275,10 @@ func (s *Session) handleNodeConnected(host *HostInfo) {
 	if !s.cfg.filterHost(host) {
 		s.policy.HostUp(host)
 	}
+
+	// if s.nodeStateListener != nil {
+	// 	s.nodeStateListener.OnNodeConnected(host)
+	// }
 }
 
 func (s *Session) handleNodeDown(ip net.IP, port int) {
@@ -268,4 +296,81 @@ func (s *Session) handleNodeDown(ip net.IP, port int) {
 		hostID := host.HostID()
 		s.pool.removeHost(hostID)
 	}
+
+	// if s.nodeStateListener != nil {
+	// 	// TODO: if host is nil it means that we didn't have that host in the ring, do we have to handle this?
+	// 	if host == nil {
+	// 		// Expecting this never throws an error as the IP is valid
+	// 		host, _ = NewHostInfoFromAddrPort(ip, port)
+	// 	}
+	// 	s.nodeStateListener.OnNodeDown(host)
+	// }
 }
+
+// type NodeStateListener interface {
+// 	// Triggered when a node UP status event is received
+// 	OnNodeUp(host *HostInfo)
+
+// 	// Triggered when a node DOWN status event is received
+// 	OnNodeDown(host *HostInfo)
+
+// 	// Triggered when a node has been connected to successfully
+// 	OnNodeConnected(host *HostInfo)
+// }
+
+type SchemaChangeListener interface {
+	// Triggered when a keyspace update event is received
+	//
+	// TODO: should we reuse existing KeyspaceUpdateEvent which is used in policy.KeyspaceChanged? Or keep separate?
+	OnKeyspaceUpdate(event KeyspaceUpdateEvent)
+
+	// Triggered when a table update event is received
+	OnTableUpdate(event TableUpdateEvent)
+
+	// Triggered when a function update event is received
+	OnFunctionUpdate(event FunctionUpdateEvent)
+
+	// Triggered when an aggregate update event is received
+	OnAggregateUpdate(event AggregateUpdateEvent)
+
+	// Triggered when a type update event is received
+	OnTypeUpdate(event TypeUpdateEvent)
+}
+
+// TableUpdateEvent represents a table schema change event.
+// It contains the affected keyspace name, table name and the type of change.
+type TableUpdateEvent struct {
+	Keyspace string
+	Table    string
+	Change   string
+}
+
+// KeyspaceUpdateEvent represents a keyspace schema change event.
+// It contains the affected keyspace name and the type of change.
+type FunctionUpdateEvent struct {
+	Keyspace string
+	Function string
+	Change   string
+}
+
+// AggregateUpdateEvent represents an aggregate schema change event.
+// It contains the affected keyspace name, aggregate name and the type of change.
+type AggregateUpdateEvent struct {
+	Keyspace  string
+	Aggregate string
+	Change    string
+}
+
+// TypeUpdateEvent represents a type schema change event.
+// It contains the affected keyspace name, type name and the type of change.
+type TypeUpdateEvent struct {
+	Keyspace string
+	Type     string
+	Change   string
+}
+
+const (
+	SchemaChangeCreated = "CREATED"
+	SchemaChangeUpdated = "UPDATED"
+	SchemaChangeDropped = "DROPPED"
+)

@@ -210,6 +210,8 @@ type ClusterConfig struct {
 		DisableTopologyEvents bool
 		// disable registering for schema events (keyspace/table/function removed/created/updated)
 		DisableSchemaEvents bool
+
+		SchemaUpdateListener SchemaChangeListener
 	}
 
 	// DisableSkipMetadata will override the internal result metadata cache so that the driver does not

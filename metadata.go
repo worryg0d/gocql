@@ -1473,3 +1473,59 @@ func isIdentifierChar(c byte) bool {
 		c == '_' ||
 		c == '&'
 }
+
+func (s *schemaDescriber) getTableSchema(keyspace, table string) (*TableMetadata, error) {
+	ksMeta, err := s.getSchema(keyspace)
+	if err != nil {
+		return nil, err
+	}
+
+	tableMeta, ok := ksMeta.Tables[table]
+	if !ok {
+		return nil, fmt.Errorf("table %s.%s not found in schema", keyspace, table)
+	}
+
+	return tableMeta, nil
+}
+
+func (s *schemaDescriber) getFunctionSchema(keyspace, function string) (*FunctionMetadata, error) {
+	ksMeta, err := s.getSchema(keyspace)
+	if err != nil {
+		return nil, err
+	}
+
+	functionMetadata, ok := ksMeta.Functions[function]
+	if !ok {
+		return nil, fmt.Errorf("function %s.%s not found in schema", keyspace, function)
+	}
+
+	return functionMetadata, nil
+}
+
+func (s *schemaDescriber) getAggregateSchema(keyspace, aggregate string) (*AggregateMetadata, error) {
+	ksMeta, err := s.getSchema(keyspace)
+	if err != nil {
+		return nil, err
+	}
+
+	aggregateMetadata, ok := ksMeta.Aggregates[aggregate]
+	if !ok {
+		return nil, fmt.Errorf("aggregate %s.%s not found in schema", keyspace, aggregate)
+	}
+
+	return aggregateMetadata, nil
+}
+
+func (s *schemaDescriber) getUserTypeSchema(keyspace, typeName string) (*UserTypeMetadata, error) {
+	ksMeta, err := s.getSchema(keyspace)
+	if err != nil {
+		return nil, err
+	}
+
+	userTypeMetadata, ok := ksMeta.UserTypes[typeName]
+	if !ok {
+		return nil, fmt.Errorf("user type %s.%s not found in schema", keyspace, typeName)
+	}
+
+	return userTypeMetadata, nil
+}

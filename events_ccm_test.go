@@ -1,5 +1,5 @@
-//go:build (ccm && ignore) || ignore
-// +build ccm,ignore ignore
+//go:build ccm
+// +build ccm
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one
@@ -18,305 +18,177 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/*
- * Content before git sha 34fdeebefcbf183ed7f916f931aa0586fdaa1b40
- * Copyright (c) 2016, The Gocql authors,
- * provided under the BSD-3-Clause License.
- * See the NOTICE file distributed with this work for additional information.
- */
 
 package gocql
 
 import (
-	"log"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/apache/cassandra-gocql-driver/v2/internal/ccm"
+	"github.com/stretchr/testify/require"
 )
 
-func TestEventDiscovery(t *testing.T) {
-	t.Skip("FLAKE skipping")
-	if err := ccm.AllUp(); err != nil {
-		t.Fatal(err)
-	}
-
-	session := createSession(t)
-	defer session.Close()
-
-	status, err := ccm.Status()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("status=%+v\n", status)
-
-	session.pool.mu.RLock()
-	poolHosts := session.pool.hostConnPools // TODO: replace with session.ring
-	t.Logf("poolhosts=%+v\n", poolHosts)
-	// check we discovered all the nodes in the ring
-	for _, host := range status {
-		if _, ok := poolHosts[host.Addr]; !ok {
-			t.Errorf("did not discover %q", host.Addr)
-		}
-	}
-	session.pool.mu.RUnlock()
-	if t.Failed() {
-		t.FailNow()
-	}
+type schemaChangesTestListener struct {
+	KeyspaceCreatedEvents []KeyspaceCreatedEvent
+	KeyspaceUpdatedEvents []KeyspaceUpdatedEvent
+	KeyspaceDroppedEvents []KeyspaceDroppedEvent
 }
 
-func TestEventNodeDownControl(t *testing.T) {
-	t.Skip("FLAKE skipping")
-	const targetNode = "node1"
-	if err := ccm.AllUp(); err != nil {
-		t.Fatal(err)
-	}
-
-	status, err := ccm.Status()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cluster := createCluster()
-	cluster.Hosts = []string{status[targetNode].Addr}
-	session := createSessionFromCluster(cluster, t)
-	defer session.Close()
-
-	t.Log("marking " + targetNode + " as down")
-	if err := ccm.NodeDown(targetNode); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf("status=%+v\n", status)
-	t.Logf("marking node %q down: %v\n", targetNode, status[targetNode])
-
-	time.Sleep(5 * time.Second)
-
-	session.pool.mu.RLock()
-
-	poolHosts := session.pool.hostConnPools
-	node := status[targetNode]
-	t.Logf("poolhosts=%+v\n", poolHosts)
-
-	if _, ok := poolHosts[node.Addr]; ok {
-		session.pool.mu.RUnlock()
-		t.Fatal("node not removed after remove event")
-	}
-	session.pool.mu.RUnlock()
-
-	host, _ := session.ring.getHost(node.Addr)
-	if host == nil {
-		t.Fatal("node not in metadata ring")
-	} else if host.IsUp() {
-		t.Fatalf("not not marked as down after event in metadata: %v", host)
-	}
+// AggregateCreated implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) AggregateCreated(event AggregateCreatedEvent) {
+	panic("unimplemented")
 }
 
-func TestEventNodeDown(t *testing.T) {
-	t.Skip("FLAKE skipping")
-	const targetNode = "node3"
-	if err := ccm.AllUp(); err != nil {
-		t.Fatal(err)
-	}
-
-	session := createSession(t)
-	defer session.Close()
-
-	if err := ccm.NodeDown(targetNode); err != nil {
-		t.Fatal(err)
-	}
-
-	status, err := ccm.Status()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("status=%+v\n", status)
-	t.Logf("marking node %q down: %v\n", targetNode, status[targetNode])
-
-	time.Sleep(5 * time.Second)
-
-	session.pool.mu.RLock()
-	defer session.pool.mu.RUnlock()
-
-	poolHosts := session.pool.hostConnPools
-	node := status[targetNode]
-	t.Logf("poolhosts=%+v\n", poolHosts)
-
-	if _, ok := poolHosts[node.Addr]; ok {
-		t.Fatal("node not removed after remove event")
-	}
-
-	host, _ := session.ring.getHost(node.Addr)
-	if host == nil {
-		t.Fatal("node not in metadata ring")
-	} else if host.IsUp() {
-		t.Fatalf("not not marked as down after event in metadata: %v", host)
-	}
+// AggregateDropped implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) AggregateDropped(event AggregateDroppedEvent) {
+	panic("unimplemented")
 }
 
-func TestEventNodeUp(t *testing.T) {
-	t.Skip("FLAKE skipping")
-	if err := ccm.AllUp(); err != nil {
-		t.Fatal(err)
-	}
-
-	status, err := ccm.Status()
-	if err != nil {
-		t.Fatal(err)
-	}
-	log.Printf("status=%+v\n", status)
-
-	session := createSession(t)
-	defer session.Close()
-
-	const targetNode = "node2"
-	node := status[targetNode]
-
-	_, ok := session.pool.getPool(node.Addr)
-	if !ok {
-		session.pool.mu.RLock()
-		t.Errorf("target pool not in connection pool: addr=%q pools=%v", status[targetNode].Addr, session.pool.hostConnPools)
-		session.pool.mu.RUnlock()
-		t.FailNow()
-	}
-
-	if err := ccm.NodeDown(targetNode); err != nil {
-		t.Fatal(err)
-	}
-
-	time.Sleep(5 * time.Second)
-
-	_, ok = session.pool.getPool(node.Addr)
-	if ok {
-		t.Fatal("node not removed after remove event")
-	}
-
-	if err := ccm.NodeUp(targetNode); err != nil {
-		t.Fatal(err)
-	}
-
-	// cassandra < 2.2 needs 10 seconds to start up the binary service
-	time.Sleep(15 * time.Second)
-
-	_, ok = session.pool.getPool(node.Addr)
-	if !ok {
-		t.Fatal("node not added after node added event")
-	}
-
-	host, _ := session.ring.getHost(node.Addr)
-	if host == nil {
-		t.Fatal("node not in metadata ring")
-	} else if !host.IsUp() {
-		t.Fatalf("not not marked as UP after event in metadata: addr=%q host=%p: %v", node.Addr, host, host)
-	}
+// AggregateUpdated implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) AggregateUpdated(event AggregateUpdatedEvent) {
+	panic("unimplemented")
 }
 
-func TestEventFilter(t *testing.T) {
-	t.Skip("FLAKE skipping")
-	if err := ccm.AllUp(); err != nil {
-		t.Fatal(err)
-	}
-
-	status, err := ccm.Status()
-	if err != nil {
-		t.Fatal(err)
-	}
-	log.Printf("status=%+v\n", status)
-
-	cluster := createCluster()
-	cluster.HostFilter = WhiteListHostFilter(status["node1"].Addr)
-	session := createSessionFromCluster(cluster, t)
-	defer session.Close()
-
-	if _, ok := session.pool.getPool(status["node1"].Addr); !ok {
-		t.Errorf("should have %v in pool but dont", "node1")
-	}
-
-	for _, host := range [...]string{"node2", "node3"} {
-		_, ok := session.pool.getPool(status[host].Addr)
-		if ok {
-			t.Errorf("should not have %v in pool", host)
-		}
-	}
-
-	if t.Failed() {
-		t.FailNow()
-	}
-
-	if err := ccm.NodeDown("node2"); err != nil {
-		t.Fatal(err)
-	}
-
-	time.Sleep(5 * time.Second)
-
-	if err := ccm.NodeUp("node2"); err != nil {
-		t.Fatal(err)
-	}
-
-	time.Sleep(15 * time.Second)
-	for _, host := range [...]string{"node2", "node3"} {
-		_, ok := session.pool.getPool(status[host].Addr)
-		if ok {
-			t.Errorf("should not have %v in pool", host)
-		}
-	}
-
-	if t.Failed() {
-		t.FailNow()
-	}
-
+// FunctionCreated implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) FunctionCreated(event FunctionCreatedEvent) {
+	panic("unimplemented")
 }
 
-func TestEventDownQueryable(t *testing.T) {
-	t.Skip("FLAKE skipping")
-	if err := ccm.AllUp(); err != nil {
-		t.Fatal(err)
-	}
+// FunctionDropped implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) FunctionDropped(event FunctionDroppedEvent) {
+	panic("unimplemented")
+}
 
-	status, err := ccm.Status()
-	if err != nil {
-		t.Fatal(err)
-	}
-	log.Printf("status=%+v\n", status)
+// FunctionUpdated implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) FunctionUpdated(event FunctionUpdatedEvent) {
+	panic("unimplemented")
+}
 
-	const targetNode = "node1"
+// KeyspaceCreated implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) KeyspaceCreated(event KeyspaceCreatedEvent) {
+	(*s).KeyspaceCreatedEvents = append(s.KeyspaceCreatedEvents, event)
+}
 
-	addr := status[targetNode].Addr
+// KeyspaceDropped implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) KeyspaceDropped(event KeyspaceDroppedEvent) {
+	(*s).KeyspaceDroppedEvents = append(s.KeyspaceDroppedEvents, event)
+}
 
-	cluster := createCluster()
-	cluster.Hosts = []string{addr}
-	cluster.HostFilter = WhiteListHostFilter(addr)
-	session := createSessionFromCluster(cluster, t)
-	defer session.Close()
+// KeyspaceUpdated implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) KeyspaceUpdated(event KeyspaceUpdatedEvent) {
+	(*s).KeyspaceUpdatedEvents = append(s.KeyspaceUpdatedEvents, event)
+}
 
-	if pool, ok := session.pool.getPool(addr); !ok {
-		t.Fatalf("should have %v in pool but dont", addr)
-	} else if !pool.host.IsUp() {
-		t.Fatalf("host is not up %v", pool.host)
-	}
+// TableCreated implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) TableCreated(event TableCreatedEvent) {
+	panic("unimplemented")
+}
 
-	if err := ccm.NodeDown(targetNode); err != nil {
-		t.Fatal(err)
-	}
+// TableDropped implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) TableDropped(event TableDroppedEvent) {
+	panic("unimplemented")
+}
 
-	time.Sleep(5 * time.Second)
+// TableUpdated implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) TableUpdated(event TableUpdatedEvent) {
+	panic("unimplemented")
+}
 
-	if err := ccm.NodeUp(targetNode); err != nil {
-		t.Fatal(err)
-	}
+// UserTypeCreated implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) UserTypeCreated(event UserTypeCreatedEvent) {
+	panic("unimplemented")
+}
 
-	time.Sleep(15 * time.Second)
+// UserTypeDropped implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) UserTypeDropped(event UserTypeDroppedEvent) {
+	panic("unimplemented")
+}
 
-	if pool, ok := session.pool.getPool(addr); !ok {
-		t.Fatalf("should have %v in pool but dont", addr)
-	} else if !pool.host.IsUp() {
-		t.Fatalf("host is not up %v", pool.host)
-	}
+// UserTypeUpdated implements [SchemaChangeListener].
+func (s *schemaChangesTestListener) UserTypeUpdated(event UserTypeUpdatedEvent) {
+	panic("unimplemented")
+}
 
-	var rows int
-	if err := session.Query("SELECT COUNT(*) FROM system.local").Scan(&rows); err != nil {
-		t.Fatal(err)
-	} else if rows != 1 {
-		t.Fatalf("expected to get 1 row got %d", rows)
-	}
+func (s *schemaChangesTestListener) clear() {
+	s.KeyspaceCreatedEvents = nil
+	s.KeyspaceDroppedEvents = nil
+	s.KeyspaceUpdatedEvents = nil
+}
+
+func TestTopologyEvents_Keyspace(t *testing.T) {
+	ccm.DoWithin(t, func(meta *ccm.ClusterMetadata) {
+		listener := &schemaChangesTestListener{}
+
+		session := createSession(t, func(config *ClusterConfig) {
+			config.Hosts = []string{meta.Hosts[0].Addr}
+			config.Events.SchemaUpdateListener = listener
+			config.Events.DisableTopologyEvents = false
+		})
+		defer session.Close()
+
+		time.Sleep(2 * time.Second)
+
+		ks := randomNameWithPrefix("gocql_integration_tests_events_")
+
+		listener.clear()
+
+		err := session.Query(fmt.Sprintf(`CREATE KEYSPACE %s WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}`, ks)).Exec()
+		require.NoError(t, err, "Expected no error creating keyspace")
+
+		require.Eventually(t, func() bool {
+			return len(listener.KeyspaceCreatedEvents) > 0
+		}, time.Second*5, time.Millisecond*100, "Expected keyspace created event to be received")
+
+		// Verify that the listener received the keyspace created event
+		require.Equal(t, ks, listener.KeyspaceCreatedEvents[0].Keyspace.Name, "Expected keyspace created event to have correct keyspace name")
+		require.Contains(t, listener.KeyspaceCreatedEvents[0].Keyspace.StrategyClass, "SimpleStrategy", "Expected keyspace created event to have correct replication class")
+		require.Equal(t, "1", listener.KeyspaceCreatedEvents[0].Keyspace.StrategyOptions["replication_factor"], "Expected keyspace created event to have correct replication factor")
+
+		listener.clear()
+
+		err = session.Query(fmt.Sprintf(`ALTER KEYSPACE %s WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '2'}`, ks)).Exec()
+		require.NoError(t, err, "Expected no error updating keyspace")
+
+		// Verify that the listener received the keyspace updated event
+		// and that the old and new metadata are correct
+
+		require.Eventually(t, func() bool {
+			return len(listener.KeyspaceUpdatedEvents) > 0
+		}, time.Second*5, time.Millisecond*100, "Expected keyspace updated event to be received")
+
+		// Old metadata
+		require.Equal(t, ks, listener.KeyspaceUpdatedEvents[0].OldKeyspace.Name, "Expected keyspace updated event to have correct keyspace name")
+		require.Contains(t, listener.KeyspaceUpdatedEvents[0].OldKeyspace.StrategyClass, "SimpleStrategy", "Expected keyspace created event to have correct replication class")
+		require.Equal(t, "1", listener.KeyspaceUpdatedEvents[0].OldKeyspace.StrategyOptions["replication_factor"], "Expected keyspace updated event to have correct old replication factor")
+
+		// New metadata
+		require.Equal(t, ks, listener.KeyspaceUpdatedEvents[0].NewKeyspace.Name, "Expected keyspace updated event to have correct keyspace name")
+		require.Contains(t, listener.KeyspaceUpdatedEvents[0].NewKeyspace.StrategyClass, "SimpleStrategy", "Expected keyspace updated event to have correct replication class")
+		require.Equal(t, "2", listener.KeyspaceUpdatedEvents[0].NewKeyspace.StrategyOptions["replication_factor"], "Expected keyspace updated event to have correct new replication factor")
+
+		time.Sleep(2 * time.Second)
+
+		listener.clear()
+
+		err = session.Query(fmt.Sprintf(`DROP KEYSPACE %s`, ks)).
+			RetryPolicy(&SimpleRetryPolicy{}).
+			Consistency(All).
+			Exec()
+		require.NoError(t, err, "Expected no error dropping keyspace")
+
+		require.Eventually(t, func() bool {
+			t.Logf("Checking for drop events, count: %d", len(listener.KeyspaceDroppedEvents))
+			return len(listener.KeyspaceDroppedEvents) > 0
+		}, time.Second*60, time.Millisecond*100, "Expected keyspace dropped event to be received")
+
+		// Verify that the listener received the keyspace dropped event
+		require.Equal(t, ks, listener.KeyspaceDroppedEvents[0].Keyspace.Name, "Expected keyspace dropped event to have correct keyspace name")
+	})
+}
+
+func randomNameWithPrefix(prefix string) string {
+	return prefix + strings.ToLower(randomText(10))
 }

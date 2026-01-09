@@ -175,7 +175,14 @@ func (s *Session) handleKeyspaceChange(frame *schemaChangeKeyspace) {
 	// Clear the schema cache to force re-fetching updated schema
 
 	s.schemaDescriber.clearSchema(keyspace)
-	s.control.awaitSchemaAgreement()
+
+	err = s.control.awaitSchemaAgreement()
+	if err != nil {
+		s.logger.Error("Error while awaiting schema agreement after keyspace change.",
+			NewLogFieldString("keyspace", keyspace), NewLogFieldError("err", err))
+		return
+	}
+
 	keyspaceMeta, err := s.schemaDescriber.getSchema(keyspace)
 	if err != nil {
 		s.logger.Error("Unable to get new keyspace metadata for updated keyspace.",
@@ -188,11 +195,11 @@ func (s *Session) handleKeyspaceChange(frame *schemaChangeKeyspace) {
 
 	switch frame.change {
 	case SchemaChangeCreated:
-		s.schemaUpdateListener.KeyspaceCreated(KeyspaceCreatedEvent{KeyspaceMetadata: keyspaceMeta})
+		s.schemaUpdateListener.KeyspaceCreated(KeyspaceCreatedEvent{Keyspace: keyspaceMeta})
 	case SchemaChangeUpdated:
-		s.schemaUpdateListener.KeyspaceUpdated(KeyspaceUpdatedEvent{OldKeyspaceMetadata: oldKeyspaceMeta, NewKeyspaceMetadata: keyspaceMeta})
+		s.schemaUpdateListener.KeyspaceUpdated(KeyspaceUpdatedEvent{OldKeyspace: oldKeyspaceMeta, NewKeyspace: keyspaceMeta})
 	case SchemaChangeDropped:
-		s.schemaUpdateListener.KeyspaceDropped(KeyspaceDroppedEvent{KeyspaceMetadata: keyspaceMeta})
+		s.schemaUpdateListener.KeyspaceDropped(KeyspaceDroppedEvent{Keyspace: keyspaceMeta})
 	}
 }
 
@@ -522,20 +529,20 @@ const (
 // KeyspaceCreatedEvent represents a keyspace creation event.
 // It contains the metadata of the created keyspace.
 type KeyspaceCreatedEvent struct {
-	KeyspaceMetadata *KeyspaceMetadata
+	Keyspace *KeyspaceMetadata
 }
 
 // KeyspaceUpdatedEvent represents a keyspace update event.
 // It contains the old and new metadata of the updated keyspace.
 type KeyspaceUpdatedEvent struct {
-	OldKeyspaceMetadata *KeyspaceMetadata
-	NewKeyspaceMetadata *KeyspaceMetadata
+	OldKeyspace *KeyspaceMetadata
+	NewKeyspace *KeyspaceMetadata
 }
 
 // KeyspaceDroppedEvent represents a keyspace drop event.
 // It contains the metadata of the dropped keyspace.
 type KeyspaceDroppedEvent struct {
-	KeyspaceMetadata *KeyspaceMetadata
+	Keyspace *KeyspaceMetadata
 }
 
 // TableCreatedEvent represents a table creation event.

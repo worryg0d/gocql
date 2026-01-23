@@ -30,11 +30,13 @@ package ccm
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func execCmd(args ...string) (*bytes.Buffer, error) {
@@ -48,7 +50,7 @@ func execCmd(args ...string) (*bytes.Buffer, error) {
 	cmd.Stdout = stdout
 	cmd.Stderr = &bytes.Buffer{}
 	if err := cmd.Run(); err != nil {
-		return nil, errors.New(cmd.Stderr.(*bytes.Buffer).String())
+		return nil, fmt.Errorf("Failed to execute command: [ %s ], err: %w, stderr: %s", cmd.String(), err, cmd.Stderr.(*bytes.Buffer).String())
 	}
 
 	return stdout, nil
@@ -199,4 +201,80 @@ func Status() (map[string]Host, error) {
 	}
 
 	return nodes, nil
+}
+
+func Hosts() ([]Host, error) {
+	status, err := Status()
+	if err != nil {
+		return nil, err
+	}
+
+	hosts := make([]Host, 0, len(status))
+	for _, host := range status {
+		hosts = append(hosts, host)
+	}
+
+	return hosts, nil
+}
+
+// Runs ccm start --wait-for-binary-proto to start the cluster or stopped nodes if any
+func StartAll() error {
+	_, err := execCmd("start", "--wait-for-binary-proto")
+	return err
+}
+
+func DownAll() error {
+	_, err := execCmd("stop")
+	return err
+}
+
+type ClusterMetadata struct {
+	Name  string
+	Hosts []Host
+}
+
+func CurrentCluster() (*ClusterMetadata, error) {
+	err := AllUp()
+	if err != nil {
+		return nil, err
+	}
+
+	hosts, err := Hosts()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(hosts) < 1 {
+		return nil, fmt.Errorf("no nodes in cluster")
+	}
+
+	cluster := &ClusterMetadata{
+		Name:  hosts[0].Name,
+		Hosts: hosts,
+	}
+
+	return cluster, nil
+}
+
+// DoWhenAllNodesUp runs the provided function while ensuring that all nodes are up
+// before and after its execution.
+func DoWhenAllNodesUp(t testing.TB, fn func(metadata *ClusterMetadata)) {
+	t.Helper()
+
+	defer func() {
+		t.Log("Starting nodes of the CCM cluster...")
+		err := StartAll()
+		require.NoError(t, err)
+		t.Log("All nodes started.")
+
+		// Wait for all nodes to be up
+
+		err = AllUp()
+		require.NoError(t, err)
+	}()
+
+	metadata, err := CurrentCluster()
+	require.NoError(t, err)
+
+	fn(metadata)
 }

@@ -71,3 +71,34 @@ func TestCCM(t *testing.T) {
 		t.Fatal("node1 is not up")
 	}
 }
+
+func TestCCM_DoWhenAllNodesUp(t *testing.T) {
+	DoWhenAllNodesUp(t, func(meta *ClusterMetadata) {
+		for _, node := range meta.Hosts {
+			if !node.State.IsUp() {
+				t.Fatalf("node %v is DOWN, expected UP", node.Name)
+			}
+		}
+
+		err := DownAll()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		status, err := Status()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, node := range status {
+			if node.State.IsUp() {
+				t.Fatalf("node %v is UP, expected DOWN", node.Name)
+			}
+		}
+	})
+
+	err := AllUp()
+	if err != nil {
+		t.Fatal(err, "All nodes expected to be UP after DoWithin")
+	}
+}

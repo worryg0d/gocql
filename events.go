@@ -152,10 +152,6 @@ func (s *Session) handleSchemaEvent(frames []frame) {
 
 func (s *Session) handleKeyspaceChange(frame *schemaChangeKeyspace) {
 	keyspace := frame.keyspace
-	s.logger.Info("Handling keyspace change event.",
-		NewLogFieldString("keyspace", keyspace),
-		NewLogFieldString("change", frame.change),
-	)
 
 	if s.schemaUpdateListener == nil {
 		s.schemaDescriber.clearSchema(keyspace)

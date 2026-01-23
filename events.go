@@ -152,6 +152,10 @@ func (s *Session) handleSchemaEvent(frames []frame) {
 
 func (s *Session) handleKeyspaceChange(frame *schemaChangeKeyspace) {
 	keyspace := frame.keyspace
+	s.logger.Info("Handling keyspace change event.",
+		NewLogFieldString("keyspace", keyspace),
+		NewLogFieldString("change", frame.change),
+	)
 
 	if s.schemaUpdateListener == nil {
 		s.schemaDescriber.clearSchema(keyspace)
@@ -160,11 +164,13 @@ func (s *Session) handleKeyspaceChange(frame *schemaChangeKeyspace) {
 		return
 	}
 
-	var oldKeyspaceMeta *KeyspaceMetadata
+	var previousKeyspaceMeta *KeyspaceMetadata
+	var currentKeyspaceMeta *KeyspaceMetadata
 	var err error
 
-	if frame.change == SchemaChangeUpdated {
-		oldKeyspaceMeta, err = s.schemaDescriber.getSchema(frame.keyspace)
+	// Get previous keyspace metadata if not a creation event
+	if frame.change != SchemaChangeCreated {
+		previousKeyspaceMeta, err = s.schemaDescriber.getSchema(frame.keyspace)
 		if err != nil {
 			s.logger.Error("Unable to get old keyspace metadata for updated keyspace.",
 				NewLogFieldString("keyspace", frame.keyspace), NewLogFieldError("err", err))
@@ -183,11 +189,14 @@ func (s *Session) handleKeyspaceChange(frame *schemaChangeKeyspace) {
 		return
 	}
 
-	keyspaceMeta, err := s.schemaDescriber.getSchema(keyspace)
-	if err != nil {
-		s.logger.Error("Unable to get new keyspace metadata for updated keyspace.",
-			NewLogFieldString("keyspace", keyspace), NewLogFieldError("err", err))
-		return
+	// Get current keyspace metadata if not a drop event
+	if frame.change != SchemaChangeDropped {
+		currentKeyspaceMeta, err = s.schemaDescriber.getSchema(keyspace)
+		if err != nil {
+			s.logger.Error("Unable to get new keyspace metadata for updated keyspace.",
+				NewLogFieldString("keyspace", keyspace), NewLogFieldError("err", err))
+			return
+		}
 	}
 
 	// TODO: Don't like having 2 places where we call KeyspaceChanged
@@ -195,11 +204,11 @@ func (s *Session) handleKeyspaceChange(frame *schemaChangeKeyspace) {
 
 	switch frame.change {
 	case SchemaChangeCreated:
-		s.schemaUpdateListener.KeyspaceCreated(KeyspaceCreatedEvent{Keyspace: keyspaceMeta})
+		s.schemaUpdateListener.KeyspaceCreated(KeyspaceCreatedEvent{Keyspace: currentKeyspaceMeta})
 	case SchemaChangeUpdated:
-		s.schemaUpdateListener.KeyspaceUpdated(KeyspaceUpdatedEvent{OldKeyspace: oldKeyspaceMeta, NewKeyspace: keyspaceMeta})
+		s.schemaUpdateListener.KeyspaceUpdated(KeyspaceUpdatedEvent{OldKeyspace: previousKeyspaceMeta, NewKeyspace: currentKeyspaceMeta})
 	case SchemaChangeDropped:
-		s.schemaUpdateListener.KeyspaceDropped(KeyspaceDroppedEvent{Keyspace: keyspaceMeta})
+		s.schemaUpdateListener.KeyspaceDropped(KeyspaceDroppedEvent{Keyspace: previousKeyspaceMeta})
 	}
 }
 
@@ -210,11 +219,12 @@ func (s *Session) handleTableChange(frame *schemaChangeTable) {
 		return
 	}
 
-	var oldTable *TableMetadata
+	var previousTable *TableMetadata
+	var currentTable *TableMetadata
 	var err error
 
-	if frame.change == SchemaChangeUpdated {
-		oldTable, err = s.schemaDescriber.getTableSchema(keyspace, frame.object)
+	if frame.change != SchemaChangeCreated {
+		previousTable, err = s.schemaDescriber.getTableSchema(keyspace, frame.object)
 		if err != nil {
 			s.logger.Error("Unable to get old table metadata for updated table.",
 				NewLogFieldString("keyspace", keyspace), NewLogFieldString("table", frame.object), NewLogFieldError("err", err))
@@ -224,20 +234,23 @@ func (s *Session) handleTableChange(frame *schemaChangeTable) {
 
 	// Clear the schema cache to force re-fetching updated schema
 	s.schemaDescriber.clearSchema(keyspace)
-	newTable, err := s.schemaDescriber.getTableSchema(keyspace, frame.object)
-	if err != nil {
-		s.logger.Error("Unable to get new table metadata for updated table.",
-			NewLogFieldString("keyspace", keyspace), NewLogFieldString("table", frame.object), NewLogFieldError("err", err))
-		return
+
+	if frame.change != SchemaChangeDropped {
+		currentTable, err = s.schemaDescriber.getTableSchema(keyspace, frame.object)
+		if err != nil {
+			s.logger.Error("Unable to get new table metadata for updated table.",
+				NewLogFieldString("keyspace", keyspace), NewLogFieldString("table", frame.object), NewLogFieldError("err", err))
+			return
+		}
 	}
 
 	switch frame.change {
 	case SchemaChangeCreated:
-		s.schemaUpdateListener.TableCreated(TableCreatedEvent{Table: newTable})
+		s.schemaUpdateListener.TableCreated(TableCreatedEvent{Table: currentTable})
 	case SchemaChangeUpdated:
-		s.schemaUpdateListener.TableUpdated(TableUpdatedEvent{OldTable: oldTable, NewTable: newTable})
+		s.schemaUpdateListener.TableUpdated(TableUpdatedEvent{OldTable: previousTable, NewTable: currentTable})
 	case SchemaChangeDropped:
-		s.schemaUpdateListener.TableDropped(TableDroppedEvent{Table: newTable})
+		s.schemaUpdateListener.TableDropped(TableDroppedEvent{Table: previousTable})
 	}
 }
 

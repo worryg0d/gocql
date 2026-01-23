@@ -35,6 +35,10 @@ type schemaChangesTestListener struct {
 	KeyspaceCreatedEvents []KeyspaceCreatedEvent
 	KeyspaceUpdatedEvents []KeyspaceUpdatedEvent
 	KeyspaceDroppedEvents []KeyspaceDroppedEvent
+
+	TableCreatedEvents []TableCreatedEvent
+	TableUpdatedEvents []TableUpdatedEvent
+	TableDroppedEvents []TableDroppedEvent
 }
 
 // AggregateCreated implements [SchemaChangeListener].
@@ -84,17 +88,17 @@ func (s *schemaChangesTestListener) KeyspaceUpdated(event KeyspaceUpdatedEvent) 
 
 // TableCreated implements [SchemaChangeListener].
 func (s *schemaChangesTestListener) TableCreated(event TableCreatedEvent) {
-	panic("unimplemented")
+	(*s).TableCreatedEvents = append(s.TableCreatedEvents, event)
 }
 
 // TableDropped implements [SchemaChangeListener].
 func (s *schemaChangesTestListener) TableDropped(event TableDroppedEvent) {
-	panic("unimplemented")
+	(*s).TableDroppedEvents = append(s.TableDroppedEvents, event)
 }
 
 // TableUpdated implements [SchemaChangeListener].
 func (s *schemaChangesTestListener) TableUpdated(event TableUpdatedEvent) {
-	panic("unimplemented")
+	(*s).TableUpdatedEvents = append(s.TableUpdatedEvents, event)
 }
 
 // UserTypeCreated implements [SchemaChangeListener].
@@ -116,22 +120,24 @@ func (s *schemaChangesTestListener) clear() {
 	s.KeyspaceCreatedEvents = nil
 	s.KeyspaceDroppedEvents = nil
 	s.KeyspaceUpdatedEvents = nil
+
+	s.TableCreatedEvents = nil
+	s.TableUpdatedEvents = nil
+	s.TableDroppedEvents = nil
 }
 
-func TestTopologyEvents_Keyspace(t *testing.T) {
-	ccm.DoWithin(t, func(meta *ccm.ClusterMetadata) {
+func TestSchemaEvents_Keyspace(t *testing.T) {
+	ccm.DoWhenAllNodesUp(t, func(meta *ccm.ClusterMetadata) {
 		listener := &schemaChangesTestListener{}
 
 		session := createSession(t, func(config *ClusterConfig) {
 			config.Hosts = []string{meta.Hosts[0].Addr}
 			config.Events.SchemaUpdateListener = listener
-			config.Events.DisableTopologyEvents = false
+			config.Events.DisableSchemaEvents = false
 		})
 		defer session.Close()
 
-		time.Sleep(2 * time.Second)
-
-		ks := randomNameWithPrefix("gocql_integration_tests_events_")
+		ks := randomNameWithPrefix("gocql_keyspace_events_")
 
 		listener.clear()
 
@@ -180,7 +186,6 @@ func TestTopologyEvents_Keyspace(t *testing.T) {
 		require.NoError(t, err, "Expected no error dropping keyspace")
 
 		require.Eventually(t, func() bool {
-			t.Logf("Checking for drop events, count: %d", len(listener.KeyspaceDroppedEvents))
 			return len(listener.KeyspaceDroppedEvents) > 0
 		}, time.Second*60, time.Millisecond*100, "Expected keyspace dropped event to be received")
 
@@ -191,4 +196,64 @@ func TestTopologyEvents_Keyspace(t *testing.T) {
 
 func randomNameWithPrefix(prefix string) string {
 	return prefix + strings.ToLower(randomText(10))
+}
+
+func TestSchemaEvents_Table(t *testing.T) {
+	ccm.DoWhenAllNodesUp(t, func(meta *ccm.ClusterMetadata) {
+		listener := &schemaChangesTestListener{}
+
+		session := createSession(t, func(config *ClusterConfig) {
+			config.Hosts = []string{meta.Hosts[0].Addr}
+			config.Events.SchemaUpdateListener = listener
+			config.Events.DisableSchemaEvents = false
+		})
+		defer session.Close()
+
+		table := randomNameWithPrefix("gocql_integration_tests_schema_events_table_")
+
+		listener.clear()
+
+		err := session.Query(fmt.Sprintf("CREATE TABLE %s (id UUID PRIMARY KEY)", table)).Exec()
+		require.NoError(t, err, "Expected no error creating table")
+
+		require.Eventually(t, func() bool {
+			return len(listener.TableCreatedEvents) > 0
+		}, time.Second*5, time.Millisecond*100, "Expected table created event to be received")
+
+		// Verify that the listener received the table created event
+		require.Equal(t, table, listener.TableCreatedEvents[0].Table.Name, "Expected table created event to have correct table name")
+		require.Contains(t, listener.TableCreatedEvents[0].Table.Columns, "id")
+		require.IsType(t, listener.TableCreatedEvents[0].Table.Columns["id"].Type, uuidType{})
+
+		listener.clear()
+
+		err = session.Query(fmt.Sprintf("ALTER TABLE %s ADD name text", table)).Exec()
+		require.NoError(t, err, "Expected no error updating table")
+
+		// Verify that the listener received the table updated event
+		// and that the old and new metadata are correct
+
+		require.Eventually(t, func() bool {
+			return len(listener.TableUpdatedEvents) > 0
+		}, time.Second*5, time.Millisecond*100, "Expected table updated event to be received")
+
+		// Old metadata
+		require.Equal(t, table, listener.TableUpdatedEvents[0].OldTable.Name, "Expected table updated event to have correct table name")
+		require.NotContains(t, listener.TableUpdatedEvents[0].OldTable.Columns, "name")
+
+		// New metadata
+		require.Equal(t, table, listener.TableUpdatedEvents[0].NewTable.Name, "Expected table updated event to have correct table name")
+		require.Contains(t, listener.TableUpdatedEvents[0].NewTable.Columns, "name")
+
+		err = session.Query(fmt.Sprintf("DROP TABLE %s", table)).Exec()
+		require.NoError(t, err, "Expected no error dropping table")
+
+		require.Eventually(t, func() bool {
+			return len(listener.TableDroppedEvents) > 0
+		}, time.Second*5, time.Millisecond*100, "Expected table dropped event to be received")
+
+		// Verify that the listener received the table dropped event
+		require.Equal(t, table, listener.TableDroppedEvents[0].Table.Name, "Expected table dropped event to have correct table name")
+		require.Contains(t, listener.TableDroppedEvents[0].Table.Columns, "name")
+	})
 }

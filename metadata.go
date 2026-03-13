@@ -52,6 +52,70 @@ type KeyspaceMetadata struct {
 	UserTypes         map[string]*UserTypeMetadata
 }
 
+// Clone creates a deep copy of the KeyspaceMetadata.
+func (k *KeyspaceMetadata) Clone() *KeyspaceMetadata {
+	if k == nil {
+		return nil
+	}
+
+	clone := &KeyspaceMetadata{
+		Name:              k.Name,
+		DurableWrites:     k.DurableWrites,
+		StrategyClass:     k.StrategyClass,
+		placementStrategy: k.placementStrategy,
+	}
+
+	// Clone StrategyOptions map
+	if k.StrategyOptions != nil {
+		clone.StrategyOptions = make(map[string]interface{}, len(k.StrategyOptions))
+		for key, value := range k.StrategyOptions {
+			clone.StrategyOptions[key] = value
+		}
+	}
+
+	// Clone Tables map
+	if k.Tables != nil {
+		clone.Tables = make(map[string]*TableMetadata, len(k.Tables))
+		for key, value := range k.Tables {
+			clone.Tables[key] = value.Clone()
+		}
+	}
+
+	// Clone Functions map
+	if k.Functions != nil {
+		clone.Functions = make(map[string]*FunctionMetadata, len(k.Functions))
+		for key, value := range k.Functions {
+			clone.Functions[key] = value.Clone()
+		}
+	}
+
+	// Clone Aggregates map
+	if k.Aggregates != nil {
+		clone.Aggregates = make(map[string]*AggregateMetadata, len(k.Aggregates))
+		for key, value := range k.Aggregates {
+			clone.Aggregates[key] = value.Clone()
+		}
+	}
+
+	// Clone MaterializedViews map
+	if k.MaterializedViews != nil {
+		clone.MaterializedViews = make(map[string]*MaterializedViewMetadata, len(k.MaterializedViews))
+		for key, value := range k.MaterializedViews {
+			clone.MaterializedViews[key] = value.Clone()
+		}
+	}
+
+	// Clone UserTypes map
+	if k.UserTypes != nil {
+		clone.UserTypes = make(map[string]*UserTypeMetadata, len(k.UserTypes))
+		for key, value := range k.UserTypes {
+			clone.UserTypes[key] = value.Clone()
+		}
+	}
+
+	return clone
+}
+
 // schema metadata for a table (a.k.a. column family)
 type TableMetadata struct {
 	Keyspace          string
@@ -68,6 +132,66 @@ type TableMetadata struct {
 	OrderedColumns    []string
 }
 
+// Clone creates a deep copy of the TableMetadata.
+func (t *TableMetadata) Clone() *TableMetadata {
+	if t == nil {
+		return nil
+	}
+
+	clone := &TableMetadata{
+		Keyspace:         t.Keyspace,
+		Name:             t.Name,
+		KeyValidator:     t.KeyValidator,
+		Comparator:       t.Comparator,
+		DefaultValidator: t.DefaultValidator,
+		ValueAlias:       t.ValueAlias,
+	}
+
+	// Clone KeyAliases slice
+	if t.KeyAliases != nil {
+		clone.KeyAliases = make([]string, len(t.KeyAliases))
+		copy(clone.KeyAliases, t.KeyAliases)
+	}
+
+	// Clone ColumnAliases slice
+	if t.ColumnAliases != nil {
+		clone.ColumnAliases = make([]string, len(t.ColumnAliases))
+		copy(clone.ColumnAliases, t.ColumnAliases)
+	}
+
+	// Clone PartitionKey slice
+	if t.PartitionKey != nil {
+		clone.PartitionKey = make([]*ColumnMetadata, len(t.PartitionKey))
+		for i, col := range t.PartitionKey {
+			clone.PartitionKey[i] = col.Clone()
+		}
+	}
+
+	// Clone ClusteringColumns slice
+	if t.ClusteringColumns != nil {
+		clone.ClusteringColumns = make([]*ColumnMetadata, len(t.ClusteringColumns))
+		for i, col := range t.ClusteringColumns {
+			clone.ClusteringColumns[i] = col.Clone()
+		}
+	}
+
+	// Clone Columns map
+	if t.Columns != nil {
+		clone.Columns = make(map[string]*ColumnMetadata, len(t.Columns))
+		for key, value := range t.Columns {
+			clone.Columns[key] = value.Clone()
+		}
+	}
+
+	// Clone OrderedColumns slice
+	if t.OrderedColumns != nil {
+		clone.OrderedColumns = make([]string, len(t.OrderedColumns))
+		copy(clone.OrderedColumns, t.OrderedColumns)
+	}
+
+	return clone
+}
+
 // schema metadata for a column
 type ColumnMetadata struct {
 	Keyspace        string
@@ -80,6 +204,31 @@ type ColumnMetadata struct {
 	ClusteringOrder string
 	Order           ColumnOrder
 	Index           ColumnIndexMetadata
+}
+
+// Clone creates a deep copy of the ColumnMetadata.
+func (c *ColumnMetadata) Clone() *ColumnMetadata {
+	if c == nil {
+		return nil
+	}
+
+	// ColumnMetadata contains only value types and TypeInfo (which is an interface)
+	// We create a shallow copy which is sufficient since TypeInfo implementations
+	// are typically immutable
+	clone := &ColumnMetadata{
+		Keyspace:        c.Keyspace,
+		Table:           c.Table,
+		Name:            c.Name,
+		ComponentIndex:  c.ComponentIndex,
+		Kind:            c.Kind,
+		Validator:       c.Validator,
+		Type:            c.Type,
+		ClusteringOrder: c.ClusteringOrder,
+		Order:           c.Order,
+		Index:           c.Index,
+	}
+
+	return clone
 }
 
 // FunctionMetadata holds metadata for function constructs
@@ -98,6 +247,43 @@ type FunctionMetadata struct {
 
 	// row string value for the return type
 	returnTypeRaw string
+}
+
+// Clone creates a deep copy of the FunctionMetadata.
+func (f *FunctionMetadata) Clone() *FunctionMetadata {
+	if f == nil {
+		return nil
+	}
+
+	clone := &FunctionMetadata{
+		Keyspace:          f.Keyspace,
+		Name:              f.Name,
+		Body:              f.Body,
+		CalledOnNullInput: f.CalledOnNullInput,
+		Language:          f.Language,
+		ReturnType:        f.ReturnType,
+		returnTypeRaw:     f.returnTypeRaw,
+	}
+
+	// Clone ArgumentTypes slice
+	if f.ArgumentTypes != nil {
+		clone.ArgumentTypes = make([]TypeInfo, len(f.ArgumentTypes))
+		copy(clone.ArgumentTypes, f.ArgumentTypes)
+	}
+
+	// Clone ArgumentNames slice
+	if f.ArgumentNames != nil {
+		clone.ArgumentNames = make([]string, len(f.ArgumentNames))
+		copy(clone.ArgumentNames, f.ArgumentNames)
+	}
+
+	// Clone argumentTypesRaw slice
+	if f.argumentTypesRaw != nil {
+		clone.argumentTypesRaw = make([]string, len(f.argumentTypesRaw))
+		copy(clone.argumentTypesRaw, f.argumentTypesRaw)
+	}
+
+	return clone
 }
 
 // AggregateMetadata holds metadata for aggregate constructs
@@ -120,6 +306,41 @@ type AggregateMetadata struct {
 	argumentTypesRaw []string
 	// raw string value for the return type
 	returnTypeRaw string
+}
+
+// Clone creates a deep copy of the AggregateMetadata.
+func (a *AggregateMetadata) Clone() *AggregateMetadata {
+	if a == nil {
+		return nil
+	}
+
+	clone := &AggregateMetadata{
+		Keyspace:      a.Keyspace,
+		Name:          a.Name,
+		FinalFunc:     a.FinalFunc,
+		InitCond:      a.InitCond,
+		ReturnType:    a.ReturnType,
+		StateFunc:     a.StateFunc,
+		StateType:     a.StateType,
+		stateFunc:     a.stateFunc,
+		finalFunc:     a.finalFunc,
+		stateTypeRaw:  a.stateTypeRaw,
+		returnTypeRaw: a.returnTypeRaw,
+	}
+
+	// Clone ArgumentTypes slice
+	if a.ArgumentTypes != nil {
+		clone.ArgumentTypes = make([]TypeInfo, len(a.ArgumentTypes))
+		copy(clone.ArgumentTypes, a.ArgumentTypes)
+	}
+
+	// Clone argumentTypesRaw slice
+	if a.argumentTypesRaw != nil {
+		clone.argumentTypesRaw = make([]string, len(a.argumentTypesRaw))
+		copy(clone.argumentTypesRaw, a.argumentTypesRaw)
+	}
+
+	return clone
 }
 
 // MaterializedViewMetadata holds the metadata for materialized views.
@@ -151,6 +372,70 @@ type MaterializedViewMetadata struct {
 	baseTableName string
 }
 
+// Clone creates a deep copy of the MaterializedViewMetadata.
+func (m *MaterializedViewMetadata) Clone() *MaterializedViewMetadata {
+	if m == nil {
+		return nil
+	}
+
+	clone := &MaterializedViewMetadata{
+		Keyspace:                m.Keyspace,
+		Name:                    m.Name,
+		AdditionalWritePolicy:   m.AdditionalWritePolicy,
+		BaseTableId:             m.BaseTableId,
+		BaseTable:               m.BaseTable.Clone(),
+		BloomFilterFpChance:     m.BloomFilterFpChance,
+		Comment:                 m.Comment,
+		CrcCheckChance:          m.CrcCheckChance,
+		DcLocalReadRepairChance: m.DcLocalReadRepairChance,
+		DefaultTimeToLive:       m.DefaultTimeToLive,
+		GcGraceSeconds:          m.GcGraceSeconds,
+		Id:                      m.Id,
+		IncludeAllColumns:       m.IncludeAllColumns,
+		MaxIndexInterval:        m.MaxIndexInterval,
+		MemtableFlushPeriodInMs: m.MemtableFlushPeriodInMs,
+		MinIndexInterval:        m.MinIndexInterval,
+		ReadRepair:              m.ReadRepair,
+		ReadRepairChance:        m.ReadRepairChance,
+		SpeculativeRetry:        m.SpeculativeRetry,
+		baseTableName:           m.baseTableName,
+	}
+
+	// Clone Caching map
+	if m.Caching != nil {
+		clone.Caching = make(map[string]string, len(m.Caching))
+		for key, value := range m.Caching {
+			clone.Caching[key] = value
+		}
+	}
+
+	// Clone Compaction map
+	if m.Compaction != nil {
+		clone.Compaction = make(map[string]string, len(m.Compaction))
+		for key, value := range m.Compaction {
+			clone.Compaction[key] = value
+		}
+	}
+
+	// Clone Compression map
+	if m.Compression != nil {
+		clone.Compression = make(map[string]string, len(m.Compression))
+		for key, value := range m.Compression {
+			clone.Compression[key] = value
+		}
+	}
+
+	// Clone Extensions map
+	if m.Extensions != nil {
+		clone.Extensions = make(map[string]string, len(m.Extensions))
+		for key, value := range m.Extensions {
+			clone.Extensions[key] = value
+		}
+	}
+
+	return clone
+}
+
 // UserTypeMetadata represents metadata information about a Cassandra User Defined Type (UDT).
 // This Go struct holds descriptive information about a UDT that exists in the Cassandra schema,
 // including the type name, keyspace, field names, and field types. It is not the UDT itself,
@@ -169,6 +454,38 @@ type UserTypeMetadata struct {
 	FieldNames    []string   // Ordered list of field names in the UDT
 	FieldTypes    []TypeInfo // Corresponding type information for each field
 	fieldTypesRaw []string   // Raw string values for the field types
+}
+
+// Clone creates a deep copy of the UserTypeMetadata.
+func (u *UserTypeMetadata) Clone() *UserTypeMetadata {
+	if u == nil {
+		return nil
+	}
+
+	clone := &UserTypeMetadata{
+		Keyspace: u.Keyspace,
+		Name:     u.Name,
+	}
+
+	// Clone FieldNames slice
+	if u.FieldNames != nil {
+		clone.FieldNames = make([]string, len(u.FieldNames))
+		copy(clone.FieldNames, u.FieldNames)
+	}
+
+	// Clone FieldTypes slice
+	if u.FieldTypes != nil {
+		clone.FieldTypes = make([]TypeInfo, len(u.FieldTypes))
+		copy(clone.FieldTypes, u.FieldTypes)
+	}
+
+	// Clone fieldTypesRaw slice
+	if u.fieldTypesRaw != nil {
+		clone.fieldTypesRaw = make([]string, len(u.fieldTypesRaw))
+		copy(clone.fieldTypesRaw, u.fieldTypesRaw)
+	}
+
+	return clone
 }
 
 // ColumnOrder represents the ordering of a column with regard to its comparator.
@@ -324,6 +641,24 @@ func (s *schemaDescriber) getSchema(keyspaceName string) (*KeyspaceMetadata, err
 	return metadata, nil
 }
 
+// returns all cached KeyspaceMetadata held by the describer
+func (s *schemaDescriber) getAllSchema() (map[string]*KeyspaceMetadata, error) {
+	if s.session.cfg.Metadata.CacheMode == Disabled {
+		return s.fetchAllSchema()
+	}
+	metadata := s.getSchemaMetaForRead().keyspaceMeta
+	if metadata == nil {
+		return nil, fmt.Errorf("cache is nil, this should never happen - report this issue to the GoCQL project on Slack, JIRA or Github")
+	}
+
+	// Return a copy of the map to prevent external modifications to the cache
+	result := make(map[string]*KeyspaceMetadata, len(metadata))
+	for k, v := range metadata {
+		result[k] = v
+	}
+	return result, nil
+}
+
 func (s *schemaDescriber) fetchSchema(keyspaceName string) (*KeyspaceMetadata, error) {
 	var err error
 
@@ -359,10 +694,76 @@ func (s *schemaDescriber) fetchSchema(keyspaceName string) (*KeyspaceMetadata, e
 	}
 
 	// organize the schema data
-	compileMetadata(s.session, keyspace, tables, columns, functions, aggregates, userTypes,
+	err = compileMetadata(s.session, keyspace, tables, columns, functions, aggregates, userTypes,
 		materializedViews)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile keyspace metadata for keyspace %s: %w", keyspaceName, err)
+	}
 
 	return keyspace, nil
+}
+
+func (s *schemaDescriber) fetchAllSchema() (map[string]*KeyspaceMetadata, error) {
+	// query the system keyspace for schema data
+	keyspaceStart := time.Now()
+	keyspaces, err := getAllKeyspaceMetadata(s.session)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve keyspace metadata: %w", err)
+	}
+	keyspaceElapsed := time.Since(keyspaceStart)
+	s.session.logger.Debug("Keyspace metadata fetch completed",
+		NewLogFieldString("duration", keyspaceElapsed.String()))
+	var tables map[string][]TableMetadata
+	var columns map[string][]ColumnMetadata
+	var functions map[string][]FunctionMetadata
+	var aggregates map[string][]AggregateMetadata
+	var userTypes map[string][]UserTypeMetadata
+	var materializedViews map[string][]MaterializedViewMetadata
+	if s.session.cfg.Metadata.CacheMode == Full {
+		tables, err = getAllTablesMetadata(s.session)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve table metadata: %w", err)
+		}
+		columns, err = getAllColumnMetadata(s.session)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve column metadata: %w", err)
+		}
+		functions, err = getAllFunctionsMetadata(s.session)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve function metadata: %w", err)
+		}
+		aggregates, err = getAllAggregatesMetadata(s.session)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve aggregate metadata: %w", err)
+		}
+		userTypes, err = getAllUserTypeMetadata(s.session)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve user type metadata: %w", err)
+		}
+		materializedViews, err = getAllMaterializedViewsMetadata(s.session)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve materialized view metadata: %w", err)
+		}
+	}
+
+	// organize the schema data
+	for keyspaceName, keyspace := range keyspaces {
+		if s.session.cfg.Metadata.CacheMode == Full {
+			err = compileMetadata(s.session,
+				keyspace,
+				tables[keyspaceName],
+				columns[keyspaceName],
+				functions[keyspaceName],
+				aggregates[keyspaceName],
+				userTypes[keyspaceName],
+				materializedViews[keyspaceName])
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile keyspace metadata for keyspace %s: %w", keyspaceName, err)
+			}
+		}
+	}
+
+	return keyspaces, nil
 }
 
 // forcibly updates the current KeyspaceMetadata held by the schema describer
@@ -392,78 +793,21 @@ func refreshSchemas(session *Session) error {
 		session.logger.Warning("Failed to await schema agreement, proceeding with schema refresh",
 			NewLogFieldError("err", awaitErr))
 	}
-	var err error
-	var keyspaceMeta map[string]*KeyspaceMetadata
-	// query the system keyspace for schema data
-	keyspaceStart := time.Now()
-	keyspaces, err := getAllKeyspaceMetadata(session)
-	if err != nil {
-		refreshErr = fmt.Errorf("failed to retrieve keyspace metadata: %w", err)
+
+	var keyspaces map[string]*KeyspaceMetadata
+	keyspaces, refreshErr = session.schemaDescriber.fetchAllSchema()
+	if refreshErr != nil {
 		return refreshErr
 	}
-	keyspaceElapsed := time.Since(keyspaceStart)
-	session.logger.Debug("Keyspace metadata fetch completed",
-		NewLogFieldString("duration", keyspaceElapsed.String()))
-	var tables map[string][]TableMetadata
-	var columns map[string][]ColumnMetadata
-	var functions map[string][]FunctionMetadata
-	var aggregates map[string][]AggregateMetadata
-	var userTypes map[string][]UserTypeMetadata
-	var materializedViews map[string][]MaterializedViewMetadata
-	if session.cfg.Metadata.CacheMode == Full {
-		tables, err = getAllTablesMetadata(session)
-		if err != nil {
-			refreshErr = fmt.Errorf("failed to retrieve table metadata: %w", err)
-			return refreshErr
-		}
-		columns, err = getAllColumnMetadata(session)
-		if err != nil {
-			refreshErr = fmt.Errorf("failed to retrieve column metadata: %w", err)
-			return refreshErr
-		}
-		functions, err = getAllFunctionsMetadata(session)
-		if err != nil {
-			refreshErr = fmt.Errorf("failed to retrieve function metadata: %w", err)
-			return refreshErr
-		}
-		aggregates, err = getAllAggregatesMetadata(session)
-		if err != nil {
-			refreshErr = fmt.Errorf("failed to retrieve aggregate metadata: %w", err)
-			return refreshErr
-		}
-		userTypes, err = getAllUserTypeMetadata(session)
-		if err != nil {
-			refreshErr = fmt.Errorf("failed to retrieve user type metadata: %w", err)
-			return refreshErr
-		}
-		materializedViews, err = getAllMaterializedViewsMetadata(session)
-		if err != nil {
-			refreshErr = fmt.Errorf("failed to retrieve materialized view metadata: %w", err)
-			return refreshErr
-		}
-	}
 
-	// organize the schema data
-	keyspaceMeta = make(map[string]*KeyspaceMetadata)
-	sd := session.schemaDescriber
-	meta := sd.getSchemaMetaForUpdate()
+	meta := session.schemaDescriber.getSchemaMetaForUpdate()
 	oldKeyspaceMeta := meta.keyspaceMeta
+
 	var newKeyspaces []string
 	var updatedKeyspaces []string
 	var droppedKeyspaces []string
+
 	for keyspaceName, keyspace := range keyspaces {
-		if session.cfg.Metadata.CacheMode == Full {
-			compileMetadata(session,
-				keyspace,
-				tables[keyspaceName],
-				columns[keyspaceName],
-				functions[keyspaceName],
-				aggregates[keyspaceName],
-				userTypes[keyspaceName],
-				materializedViews[keyspaceName])
-		}
-		// update the cache
-		keyspaceMeta[keyspaceName] = keyspace
 		if _, ok := oldKeyspaceMeta[keyspaceName]; !ok {
 			newKeyspaces = append(newKeyspaces, keyspaceName)
 		} else {
@@ -481,9 +825,9 @@ func refreshSchemas(session *Session) error {
 			}
 		}
 	}
-	droppedKeyspaces = sd.getDroppedKeyspaces(oldKeyspaceMeta, keyspaces)
-	meta.keyspaceMeta = keyspaceMeta
-	sd.schemaMeta.Store(meta)
+	droppedKeyspaces = getDroppedKeyspaces(oldKeyspaceMeta, keyspaces)
+	meta.keyspaceMeta = keyspaces
+	session.schemaDescriber.schemaMeta.Store(meta)
 	refreshCacheElapsed := time.Since(start)
 	session.logger.Debug("Schema metadata cache refresh completed",
 		NewLogFieldString("duration", refreshCacheElapsed.String()))
@@ -496,7 +840,7 @@ func refreshSchemas(session *Session) error {
 
 	// Notify the policy if it supports schema refresh notifications
 	if supportsRefresh {
-		notifier.schemaRefreshed(sd.getSchemaMetaForRead())
+		notifier.schemaRefreshed(session.schemaDescriber.getSchemaMetaForRead())
 	}
 
 	session.logger.Debug("Computed schema keyspace change events",
@@ -512,7 +856,7 @@ func refreshSchemas(session *Session) error {
 				session.policy.KeyspaceChanged(KeyspaceUpdateEvent{Keyspace: name, Change: SchemaChangeTypeCreated})
 			}
 			if hasKeyspaceListener {
-				session.schemaListeners.OnKeyspaceCreated(OnKeyspaceCreatedEvent{Keyspace: keyspaceMeta[name]})
+				session.schemaListeners.OnKeyspaceCreated(OnKeyspaceCreatedEvent{Keyspace: keyspaces[name].Clone()})
 			}
 		}
 
@@ -521,7 +865,7 @@ func refreshSchemas(session *Session) error {
 				session.policy.KeyspaceChanged(KeyspaceUpdateEvent{Keyspace: name, Change: SchemaChangeTypeDropped})
 			}
 			if hasKeyspaceListener {
-				session.schemaListeners.OnKeyspaceDropped(OnKeyspaceDroppedEvent{Keyspace: oldKeyspaceMeta[name]})
+				session.schemaListeners.OnKeyspaceDropped(OnKeyspaceDroppedEvent{Keyspace: oldKeyspaceMeta[name].Clone()})
 			}
 		}
 
@@ -531,8 +875,8 @@ func refreshSchemas(session *Session) error {
 			}
 			if hasKeyspaceListener {
 				session.schemaListeners.OnKeyspaceUpdated(OnKeyspaceUpdatedEvent{
-					Old: oldKeyspaceMeta[name],
-					New: keyspaceMeta[name],
+					Old: oldKeyspaceMeta[name].Clone(),
+					New: keyspaces[name].Clone(),
 				})
 			}
 		}
@@ -544,12 +888,12 @@ func refreshSchemas(session *Session) error {
 		sessionInitialized {
 		start := time.Now()
 
-		handleFullSchemaChanges(session, oldKeyspaceMeta, keyspaceMeta)
+		handleFullSchemaChanges(session, oldKeyspaceMeta, keyspaces)
 
 		elapsed := time.Since(start)
 		session.logger.Debug("Finished calling schema change listeners.",
 			NewLogFieldInt("old_keyspaces_count", len(oldKeyspaceMeta)),
-			NewLogFieldInt("new_keyspaces_count", len(keyspaceMeta)),
+			NewLogFieldInt("new_keyspaces_count", len(keyspaces)),
 			NewLogFieldString("duration", elapsed.String()),
 		)
 	}
@@ -575,7 +919,7 @@ func (s *schemaDescriber) refreshSchemaMetadata() error {
 
 // getDroppedKeyspaces returns the list of keyspace names that existed in oldKeyspaces
 // but do not exist in newKeyspaces (i.e., keyspaces that were dropped).
-func (s *schemaDescriber) getDroppedKeyspaces(oldKeyspaces, newKeyspaces map[string]*KeyspaceMetadata) []string {
+func getDroppedKeyspaces(oldKeyspaces, newKeyspaces map[string]*KeyspaceMetadata) []string {
 	var dropped []string
 	for keyspaceName := range oldKeyspaces {
 		if _, exists := newKeyspaces[keyspaceName]; !exists {
@@ -2149,10 +2493,10 @@ func handleSchemaTableChanges(session *Session, oldKeyspace, newKeyspace *Keyspa
 	for _, oldTableMeta := range oldKeyspace.Tables {
 		newTableMeta, ok := newKeyspace.Tables[oldTableMeta.Name]
 		if !ok {
-			droppedEvents = append(droppedEvents, OnTableDroppedEvent{Table: oldTableMeta})
+			droppedEvents = append(droppedEvents, OnTableDroppedEvent{Table: oldTableMeta.Clone()})
 		} else {
 			if !compareTablesMetadata(oldTableMeta, newTableMeta) {
-				updatedEvents = append(updatedEvents, OnTableUpdatedEvent{Old: oldTableMeta, New: newTableMeta})
+				updatedEvents = append(updatedEvents, OnTableUpdatedEvent{Old: oldTableMeta.Clone(), New: newTableMeta.Clone()})
 			}
 		}
 	}
@@ -2160,7 +2504,7 @@ func handleSchemaTableChanges(session *Session, oldKeyspace, newKeyspace *Keyspa
 	for _, newTableMeta := range newKeyspace.Tables {
 		_, ok := oldKeyspace.Tables[newTableMeta.Name]
 		if !ok {
-			createdEvents = append(createdEvents, OnTableCreatedEvent{Table: newTableMeta})
+			createdEvents = append(createdEvents, OnTableCreatedEvent{Table: newTableMeta.Clone()})
 		}
 	}
 
@@ -2193,10 +2537,10 @@ func handleSchemaAggregateChanges(session *Session, oldKeyspace, newKeyspace *Ke
 	for _, oldAggregateMeta := range oldKeyspace.Aggregates {
 		newAggregateMeta, ok := newKeyspace.Aggregates[oldAggregateMeta.Name]
 		if !ok {
-			droppedEvents = append(droppedEvents, OnAggregateDroppedEvent{Aggregate: oldAggregateMeta})
+			droppedEvents = append(droppedEvents, OnAggregateDroppedEvent{Aggregate: oldAggregateMeta.Clone()})
 		} else {
 			if !compareAggregateMetadata(oldAggregateMeta, newAggregateMeta) {
-				updatedEvents = append(updatedEvents, OnAggregateUpdatedEvent{Old: oldAggregateMeta, New: newAggregateMeta})
+				updatedEvents = append(updatedEvents, OnAggregateUpdatedEvent{Old: oldAggregateMeta.Clone(), New: newAggregateMeta.Clone()})
 			}
 		}
 	}
@@ -2204,7 +2548,7 @@ func handleSchemaAggregateChanges(session *Session, oldKeyspace, newKeyspace *Ke
 	for _, newAggregateMeta := range newKeyspace.Aggregates {
 		_, ok := oldKeyspace.Aggregates[newAggregateMeta.Name]
 		if !ok {
-			createdEvents = append(createdEvents, OnAggregateCreatedEvent{Aggregate: newAggregateMeta})
+			createdEvents = append(createdEvents, OnAggregateCreatedEvent{Aggregate: newAggregateMeta.Clone()})
 		}
 	}
 
@@ -2237,10 +2581,10 @@ func handleSchemaUserTypeChanges(session *Session, oldKeyspace, newKeyspace *Key
 	for _, oldUserTypeMeta := range oldKeyspace.UserTypes {
 		newUserTypeMeta, ok := newKeyspace.UserTypes[oldUserTypeMeta.Name]
 		if !ok {
-			droppedEvents = append(droppedEvents, OnUserTypeDroppedEvent{UserType: oldUserTypeMeta})
+			droppedEvents = append(droppedEvents, OnUserTypeDroppedEvent{UserType: oldUserTypeMeta.Clone()})
 		} else {
 			if !compareUserTypeMetadata(oldUserTypeMeta, newUserTypeMeta) {
-				updatedEvents = append(updatedEvents, OnUserTypeUpdatedEvent{Old: oldUserTypeMeta, New: newUserTypeMeta})
+				updatedEvents = append(updatedEvents, OnUserTypeUpdatedEvent{Old: oldUserTypeMeta.Clone(), New: newUserTypeMeta.Clone()})
 			}
 		}
 	}
@@ -2248,7 +2592,7 @@ func handleSchemaUserTypeChanges(session *Session, oldKeyspace, newKeyspace *Key
 	for _, newUserTypeMeta := range newKeyspace.UserTypes {
 		_, ok := oldKeyspace.UserTypes[newUserTypeMeta.Name]
 		if !ok {
-			createdEvents = append(createdEvents, OnUserTypeCreatedEvent{UserType: newUserTypeMeta})
+			createdEvents = append(createdEvents, OnUserTypeCreatedEvent{UserType: newUserTypeMeta.Clone()})
 		}
 	}
 
@@ -2281,10 +2625,10 @@ func handleSchemaFunctionChanges(session *Session, oldKeyspace, newKeyspace *Key
 	for _, oldFunctionMeta := range oldKeyspace.Functions {
 		newFunctionMeta, ok := newKeyspace.Functions[oldFunctionMeta.Name]
 		if !ok {
-			droppedEvents = append(droppedEvents, OnFunctionDroppedEvent{Function: oldFunctionMeta})
+			droppedEvents = append(droppedEvents, OnFunctionDroppedEvent{Function: oldFunctionMeta.Clone()})
 		} else {
 			if !compareFunctionMetadata(oldFunctionMeta, newFunctionMeta) {
-				updatedEvents = append(updatedEvents, OnFunctionUpdatedEvent{Old: oldFunctionMeta, New: newFunctionMeta})
+				updatedEvents = append(updatedEvents, OnFunctionUpdatedEvent{Old: oldFunctionMeta.Clone(), New: newFunctionMeta.Clone()})
 			}
 		}
 	}
@@ -2292,7 +2636,7 @@ func handleSchemaFunctionChanges(session *Session, oldKeyspace, newKeyspace *Key
 	for _, newFunctionMeta := range newKeyspace.Functions {
 		_, ok := oldKeyspace.Functions[newFunctionMeta.Name]
 		if !ok {
-			createdEvents = append(createdEvents, OnFunctionCreatedEvent{Function: newFunctionMeta})
+			createdEvents = append(createdEvents, OnFunctionCreatedEvent{Function: newFunctionMeta.Clone()})
 		}
 	}
 

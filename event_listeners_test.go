@@ -484,11 +484,11 @@ func TestHostListenersMux_OnlyTargetCategoryReceivesEvents(t *testing.T) {
 	assertCounts(t, "removed host", topoListener.removedHostCount, 0)
 }
 
-type mockSessionReadyListener struct {
+type mockSessionReadyListenerUnit struct {
 	readyCount int
 }
 
-func (m *mockSessionReadyListener) OnSessionReady(_ *Session) { m.readyCount++ }
+func (m *mockSessionReadyListenerUnit) OnSessionReady(_ *Session) { m.readyCount++ }
 
 func TestSessionReadyListenersMux(t *testing.T) {
 	t.Run("no listeners", func(t *testing.T) {
@@ -497,7 +497,7 @@ func TestSessionReadyListenersMux(t *testing.T) {
 	})
 
 	t.Run("single listener", func(t *testing.T) {
-		l := &mockSessionReadyListener{}
+		l := &mockSessionReadyListenerUnit{}
 		mux := &SessionReadyListenersMux{
 			Ready: []SessionReadyListener{l},
 		}
@@ -506,16 +506,16 @@ func TestSessionReadyListenersMux(t *testing.T) {
 	})
 
 	t.Run("multiple listeners", func(t *testing.T) {
-		l1 := &mockSessionReadyListener{}
-		l2 := &mockSessionReadyListener{}
-		l3 := &mockSessionReadyListener{}
+		l1 := &mockSessionReadyListenerUnit{}
+		l2 := &mockSessionReadyListenerUnit{}
+		l3 := &mockSessionReadyListenerUnit{}
 		mux := &SessionReadyListenersMux{
 			Ready: []SessionReadyListener{l1, l2, l3},
 		}
 
 		mux.OnSessionReady(nil)
 
-		for i, l := range []*mockSessionReadyListener{l1, l2, l3} {
+		for i, l := range []*mockSessionReadyListenerUnit{l1, l2, l3} {
 			assertCountsIdx(t, i, "ready", l.readyCount, 1)
 		}
 	})

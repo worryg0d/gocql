@@ -2770,6 +2770,7 @@ func TestKeyspaceMetadata(t *testing.T) {
 				config.Metadata.CacheMode = tc.cacheMode
 			})
 			defer session.Close()
+
 			// Query keyspace metadata
 			keyspaceMetadata, err := session.KeyspaceMetadata("gocql_test")
 			if err != nil {
@@ -2781,6 +2782,47 @@ func TestKeyspaceMetadata(t *testing.T) {
 			if keyspaceMetadata.Name != session.cfg.Keyspace {
 				t.Fatalf("Expected the keyspace name to be %s but was %s", session.cfg.Keyspace, keyspaceMetadata.Name)
 			}
+
+			// Also test AllKeyspaceMetadata
+			allKeyspaces, err := session.AllKeyspaceMetadata()
+			if err != nil {
+				t.Fatalf("failed to query all keyspace metadata with err: %v", err)
+			}
+			if allKeyspaces == nil {
+				t.Fatal("expected all keyspaces metadata to not be nil, but it was nil")
+			}
+			allKeyspaceMetadata, found := allKeyspaces["gocql_test"]
+			if !found {
+				t.Fatal("expected to find gocql_test in all keyspaces metadata")
+			}
+			if allKeyspaceMetadata.Name != session.cfg.Keyspace {
+				t.Fatalf("Expected the keyspace name in all keyspaces to be %s but was %s", session.cfg.Keyspace, allKeyspaceMetadata.Name)
+			}
+
+			// Verify that both methods return equivalent metadata
+			if keyspaceMetadata.Name != allKeyspaceMetadata.Name {
+				t.Errorf("KeyspaceMetadata and AllKeyspaceMetadata returned different keyspace names: %s vs %s",
+					keyspaceMetadata.Name, allKeyspaceMetadata.Name)
+			}
+
+			// Verify table counts match
+			if len(keyspaceMetadata.Tables) != len(allKeyspaceMetadata.Tables) {
+				t.Errorf("KeyspaceMetadata and AllKeyspaceMetadata returned different table counts: %d vs %d",
+					len(keyspaceMetadata.Tables), len(allKeyspaceMetadata.Tables))
+			}
+
+			// Verify aggregate counts match
+			if len(keyspaceMetadata.Aggregates) != len(allKeyspaceMetadata.Aggregates) {
+				t.Errorf("KeyspaceMetadata and AllKeyspaceMetadata returned different aggregate counts: %d vs %d",
+					len(keyspaceMetadata.Aggregates), len(allKeyspaceMetadata.Aggregates))
+			}
+
+			// Verify user type counts match
+			if len(keyspaceMetadata.UserTypes) != len(allKeyspaceMetadata.UserTypes) {
+				t.Errorf("KeyspaceMetadata and AllKeyspaceMetadata returned different user type counts: %d vs %d",
+					len(keyspaceMetadata.UserTypes), len(allKeyspaceMetadata.UserTypes))
+			}
+
 			// When cache mode is Disabled, verify that the cache is empty
 			if tc.cacheMode == Disabled {
 				cachedMeta := session.schemaDescriber.getSchemaMetaForRead()

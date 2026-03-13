@@ -631,6 +631,10 @@ func (s *Session) removeHost(h *HostInfo) {
 }
 
 // KeyspaceMetadata returns the schema metadata for the keyspace specified. Returns an error if the keyspace does not exist.
+// If MetadataConfig.CacheMode is Disabled this method will query the system tables,
+// otherwise it will retrieve the metadata from the driver's cache.
+//
+// Check AllKeyspaceMetadata if you're interested in retrieving the metadata for all keyspaces instead.
 func (s *Session) KeyspaceMetadata(keyspace string) (*KeyspaceMetadata, error) {
 	// fail fast
 	if s.Closed() {
@@ -640,6 +644,20 @@ func (s *Session) KeyspaceMetadata(keyspace string) (*KeyspaceMetadata, error) {
 	}
 
 	return s.schemaDescriber.getSchema(keyspace)
+}
+
+// AllKeyspaceMetadata returns the schema metadata for all keyspaces.
+// If MetadataConfig.CacheMode is Disabled this method will query the system tables,
+// otherwise it will retrieve the metadata from the driver's cache.
+//
+// Check KeyspaceMetadata if you're interested in retrieving the metadata for a single keyspace by name instead.
+func (s *Session) AllKeyspaceMetadata() (map[string]*KeyspaceMetadata, error) {
+	// fail fast
+	if s.Closed() {
+		return nil, ErrSessionClosed
+	}
+
+	return s.schemaDescriber.getAllSchema()
 }
 
 func (s *Session) getConn() *Conn {

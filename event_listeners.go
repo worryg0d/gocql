@@ -32,6 +32,10 @@ type SessionReadyListener interface {
 
 // TopologyChangeListener receives topology change events.
 // Host may be nil if the node is not yet known to the ring.
+//
+// Thread Safety: Methods are called sequentially from a single goroutine.
+// However, if a type implements both TopologyChangeListener and HostStatusChangeListener,
+// it must be thread-safe as topology and status callbacks can run concurrently.
 type TopologyChangeListener interface {
 	OnNewHost(event NewHostEvent)
 	OnRemovedHost(event RemovedHostEvent)
@@ -45,6 +49,10 @@ type RemovedHostEvent struct {
 	Host *HostInfo
 }
 
+// HostStatusChangeListener receives host state change events.
+//
+// Thread Safety: Implementations must be thread-safe as methods can be called
+// concurrently from multiple goroutines.
 type HostStatusChangeListener interface {
 	OnHostUp(event HostUpEvent)
 	OnHostDown(event HostDownEvent)
@@ -58,30 +66,35 @@ type HostDownEvent struct {
 	Host *HostInfo
 }
 
+// KeyspaceChangeListener receives keyspace change events.
 type KeyspaceChangeListener interface {
 	OnKeyspaceCreated(event OnKeyspaceCreatedEvent)
 	OnKeyspaceUpdated(event OnKeyspaceUpdatedEvent)
 	OnKeyspaceDropped(event OnKeyspaceDroppedEvent)
 }
 
+// TableChangeListener receives table change events.
 type TableChangeListener interface {
 	OnTableCreated(event OnTableCreatedEvent)
 	OnTableUpdated(event OnTableUpdatedEvent)
 	OnTableDropped(event OnTableDroppedEvent)
 }
 
+// UserTypeChangeListener receives user-defined type change events.
 type UserTypeChangeListener interface {
 	OnUserTypeCreated(event OnUserTypeCreatedEvent)
 	OnUserTypeUpdated(event OnUserTypeUpdatedEvent)
 	OnUserTypeDropped(event OnUserTypeDroppedEvent)
 }
 
+// FunctionChangeListener receives function change events.
 type FunctionChangeListener interface {
 	OnFunctionCreated(event OnFunctionCreatedEvent)
 	OnFunctionUpdated(event OnFunctionUpdatedEvent)
 	OnFunctionDropped(event OnFunctionDroppedEvent)
 }
 
+// AggregateChangeListener receives aggregate change events.
 type AggregateChangeListener interface {
 	OnAggregateCreated(event OnAggregateCreatedEvent)
 	OnAggregateUpdated(event OnAggregateUpdatedEvent)

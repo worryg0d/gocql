@@ -421,6 +421,10 @@ type MetadataConfig struct {
 
 	// HostListener will be notified when host state and topology changes occur.
 	//
+	// Thread Safety: Topology change callbacks are sequential, but host status callbacks can be concurrent.
+	// If your listener implements both TopologyChangeListener and HostStatusChangeListener, it must be
+	// thread-safe as these event types can run simultaneously from different sources.
+	//
 	// Consider using [HostListenersMux] if you need to register multiple listeners for the same type of host state and topology change.
 	HostListener HostListenersConfig
 

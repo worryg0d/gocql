@@ -837,12 +837,13 @@
 //   - Host state changes: host up, host down
 //   - Topology changes: new host added, host removed, host moved
 //
-// Also, if there is a need to know when the session is ready to be used, you can register a [SessionReadyListener].
+// Schema and topology callbacks are sequential, but host status callbacks can be concurrent. If your listener
+// implements multiple event types (e.g., both topology and status changes), add proper synchronization.
 //
-// See [ClusterConfig.Metadata] for more details.
+// Also, if there is a need to know when the session is ready to be used, you can register a [SessionReadyListener].
 //
 // Consider using multiplexer types like [SchemaListenersMux], [HostListenersMux], and [SessionReadyListenersMux]
 // if you need to have multiple listeners for the same event.
 //
-// See [ClusterConfig.Metadata] for more details.
+// See [ClusterConfig.Metadata] for more details and Example_eventListeners for a complete implementation example.
 package gocql // import "github.com/apache/cassandra-gocql-driver/v2"

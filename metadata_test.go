@@ -1409,3 +1409,295 @@ func TestCompareFunctionMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestKeyspaceMetadataClone(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		var ks *KeyspaceMetadata
+		clone := ks.Clone()
+		require.Nil(t, clone)
+	})
+
+	t.Run("deep_copy", func(t *testing.T) {
+		original := &KeyspaceMetadata{
+			Name:          "test_keyspace",
+			DurableWrites: true,
+			StrategyClass: "SimpleStrategy",
+			StrategyOptions: map[string]interface{}{
+				"replication_factor": 3,
+			},
+			Tables: map[string]*TableMetadata{
+				"table1": {
+					Name:     "table1",
+					Keyspace: "test_keyspace",
+				},
+			},
+			Functions: map[string]*FunctionMetadata{
+				"func1": {
+					Name:     "func1",
+					Keyspace: "test_keyspace",
+				},
+			},
+			Aggregates: map[string]*AggregateMetadata{
+				"agg1": {
+					Name:     "agg1",
+					Keyspace: "test_keyspace",
+				},
+			},
+			UserTypes: map[string]*UserTypeMetadata{
+				"type1": {
+					Name:     "type1",
+					Keyspace: "test_keyspace",
+				},
+			},
+		}
+
+		clone := original.Clone()
+
+		// Verify clone is not nil and has same values
+		require.NotNil(t, clone)
+		require.Equal(t, original.Name, clone.Name)
+		require.Equal(t, original.DurableWrites, clone.DurableWrites)
+		require.Equal(t, original.StrategyClass, clone.StrategyClass)
+
+		// Verify maps are different instances
+		require.NotSame(t, original.StrategyOptions, clone.StrategyOptions)
+		require.NotSame(t, original.Tables, clone.Tables)
+		require.NotSame(t, original.Functions, clone.Functions)
+		require.NotSame(t, original.Aggregates, clone.Aggregates)
+		require.NotSame(t, original.UserTypes, clone.UserTypes)
+
+		// Verify modifying clone doesn't affect original
+		clone.Name = "modified"
+		clone.StrategyOptions["replication_factor"] = 5
+		clone.Tables["table2"] = &TableMetadata{Name: "table2"}
+
+		require.Equal(t, "test_keyspace", original.Name)
+		require.Equal(t, 3, original.StrategyOptions["replication_factor"])
+		require.Len(t, original.Tables, 1)
+	})
+}
+
+func TestTableMetadataClone(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		var table *TableMetadata
+		clone := table.Clone()
+		require.Nil(t, clone)
+	})
+
+	t.Run("deep_copy", func(t *testing.T) {
+		original := &TableMetadata{
+			Keyspace:      "test_keyspace",
+			Name:          "test_table",
+			KeyAliases:    []string{"key1", "key2"},
+			ColumnAliases: []string{"col1", "col2"},
+			PartitionKey: []*ColumnMetadata{
+				{Name: "pk1", Keyspace: "test_keyspace", Table: "test_table"},
+			},
+			ClusteringColumns: []*ColumnMetadata{
+				{Name: "cc1", Keyspace: "test_keyspace", Table: "test_table"},
+			},
+			Columns: map[string]*ColumnMetadata{
+				"col1": {Name: "col1", Keyspace: "test_keyspace", Table: "test_table"},
+			},
+			OrderedColumns: []string{"col1", "col2"},
+		}
+
+		clone := original.Clone()
+
+		// Verify clone is not nil and has same values
+		require.NotNil(t, clone)
+		require.Equal(t, original.Keyspace, clone.Keyspace)
+		require.Equal(t, original.Name, clone.Name)
+
+		// Verify slices and maps are different instances
+		require.NotSame(t, original.KeyAliases, clone.KeyAliases)
+		require.NotSame(t, original.ColumnAliases, clone.ColumnAliases)
+		require.NotSame(t, original.PartitionKey, clone.PartitionKey)
+		require.NotSame(t, original.ClusteringColumns, clone.ClusteringColumns)
+		require.NotSame(t, original.Columns, clone.Columns)
+		require.NotSame(t, original.OrderedColumns, clone.OrderedColumns)
+
+		// Verify modifying clone doesn't affect original
+		clone.Name = "modified"
+		clone.KeyAliases[0] = "modified_key"
+		clone.Columns["col2"] = &ColumnMetadata{Name: "col2"}
+
+		require.Equal(t, "test_table", original.Name)
+		require.Equal(t, "key1", original.KeyAliases[0])
+		require.Len(t, original.Columns, 1)
+	})
+}
+
+func TestColumnMetadataClone(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		var col *ColumnMetadata
+		clone := col.Clone()
+		require.Nil(t, clone)
+	})
+
+	t.Run("copy", func(t *testing.T) {
+		original := &ColumnMetadata{
+			Keyspace:       "test_keyspace",
+			Table:          "test_table",
+			Name:           "test_column",
+			ComponentIndex: 1,
+			Kind:           ColumnPartitionKey,
+			Validator:      "org.apache.cassandra.db.marshal.UTF8Type",
+		}
+
+		clone := original.Clone()
+
+		// Verify clone is not nil and has same values
+		require.NotNil(t, clone)
+		require.Equal(t, original.Keyspace, clone.Keyspace)
+		require.Equal(t, original.Table, clone.Table)
+		require.Equal(t, original.Name, clone.Name)
+		require.Equal(t, original.ComponentIndex, clone.ComponentIndex)
+
+		// Verify modifying clone doesn't affect original
+		clone.Name = "modified"
+		require.Equal(t, "test_column", original.Name)
+	})
+}
+
+func TestFunctionMetadataClone(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		var fn *FunctionMetadata
+		clone := fn.Clone()
+		require.Nil(t, clone)
+	})
+
+	t.Run("deep_copy", func(t *testing.T) {
+		original := &FunctionMetadata{
+			Keyspace:          "test_keyspace",
+			Name:              "test_function",
+			ArgumentNames:     []string{"arg1", "arg2"},
+			Body:              "return arg1 + arg2;",
+			CalledOnNullInput: true,
+			Language:          "java",
+		}
+
+		clone := original.Clone()
+
+		// Verify clone is not nil and has same values
+		require.NotNil(t, clone)
+		require.Equal(t, original.Keyspace, clone.Keyspace)
+		require.Equal(t, original.Name, clone.Name)
+		require.Equal(t, original.Body, clone.Body)
+
+		// Verify slices are different instances
+		require.NotSame(t, original.ArgumentNames, clone.ArgumentNames)
+
+		// Verify modifying clone doesn't affect original
+		clone.Name = "modified"
+		clone.ArgumentNames[0] = "modified_arg"
+
+		require.Equal(t, "test_function", original.Name)
+		require.Equal(t, "arg1", original.ArgumentNames[0])
+	})
+}
+
+func TestAggregateMetadataClone(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		var agg *AggregateMetadata
+		clone := agg.Clone()
+		require.Nil(t, clone)
+	})
+
+	t.Run("deep_copy", func(t *testing.T) {
+		original := &AggregateMetadata{
+			Keyspace: "test_keyspace",
+			Name:     "test_aggregate",
+			InitCond: "0",
+		}
+
+		clone := original.Clone()
+
+		// Verify clone is not nil and has same values
+		require.NotNil(t, clone)
+		require.Equal(t, original.Keyspace, clone.Keyspace)
+		require.Equal(t, original.Name, clone.Name)
+		require.Equal(t, original.InitCond, clone.InitCond)
+
+		// Verify modifying clone doesn't affect original
+		clone.Name = "modified"
+		require.Equal(t, "test_aggregate", original.Name)
+	})
+}
+
+func TestUserTypeMetadataClone(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		var udt *UserTypeMetadata
+		clone := udt.Clone()
+		require.Nil(t, clone)
+	})
+
+	t.Run("deep_copy", func(t *testing.T) {
+		original := &UserTypeMetadata{
+			Keyspace:   "test_keyspace",
+			Name:       "test_type",
+			FieldNames: []string{"field1", "field2"},
+		}
+
+		clone := original.Clone()
+
+		// Verify clone is not nil and has same values
+		require.NotNil(t, clone)
+		require.Equal(t, original.Keyspace, clone.Keyspace)
+		require.Equal(t, original.Name, clone.Name)
+
+		// Verify slices are different instances
+		require.NotSame(t, original.FieldNames, clone.FieldNames)
+
+		// Verify modifying clone doesn't affect original
+		clone.Name = "modified"
+		clone.FieldNames[0] = "modified_field"
+
+		require.Equal(t, "test_type", original.Name)
+		require.Equal(t, "field1", original.FieldNames[0])
+	})
+}
+
+func TestMaterializedViewMetadataClone(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		var mv *MaterializedViewMetadata
+		clone := mv.Clone()
+		require.Nil(t, clone)
+	})
+
+	t.Run("deep_copy", func(t *testing.T) {
+		original := &MaterializedViewMetadata{
+			Keyspace: "test_keyspace",
+			Name:     "test_view",
+			BaseTable: &TableMetadata{
+				Name:     "base_table",
+				Keyspace: "test_keyspace",
+			},
+			Caching: map[string]string{
+				"keys": "ALL",
+			},
+			Compaction: map[string]string{
+				"class": "SizeTieredCompactionStrategy",
+			},
+		}
+
+		clone := original.Clone()
+
+		// Verify clone is not nil and has same values
+		require.NotNil(t, clone)
+		require.Equal(t, original.Keyspace, clone.Keyspace)
+		require.Equal(t, original.Name, clone.Name)
+
+		// Verify maps are different instances
+		require.NotSame(t, original.Caching, clone.Caching)
+		require.NotSame(t, original.Compaction, clone.Compaction)
+		require.NotSame(t, original.BaseTable, clone.BaseTable)
+
+		// Verify modifying clone doesn't affect original
+		clone.Name = "modified"
+		clone.Caching["keys"] = "NONE"
+
+		require.Equal(t, "test_view", original.Name)
+		require.Equal(t, "ALL", original.Caching["keys"])
+	})
+}

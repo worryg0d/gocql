@@ -92,6 +92,12 @@ type FunctionMetadata struct {
 	CalledOnNullInput bool
 	Language          string
 	ReturnType        TypeInfo
+
+	// row string values for the argument types
+	argumentTypesRaw []string
+
+	// row string value for the return type
+	returnTypeRaw string
 }
 
 // AggregateMetadata holds metadata for aggregate constructs
@@ -107,6 +113,13 @@ type AggregateMetadata struct {
 
 	stateFunc string
 	finalFunc string
+
+	// raw string value for the state type
+	stateTypeRaw string
+	// raw string values for the argument types
+	argumentTypesRaw []string
+	// raw string value for the return type
+	returnTypeRaw string
 }
 
 // MaterializedViewMetadata holds the metadata for materialized views.
@@ -151,10 +164,11 @@ type MaterializedViewMetadata struct {
 // Actual UDT values are typically represented as map[string]interface{}, Go structs with
 // cql tags, or types implementing UDTMarshaler/UDTUnmarshaler interfaces.
 type UserTypeMetadata struct {
-	Keyspace   string     // The keyspace where the UDT is defined
-	Name       string     // The name of the User Defined Type
-	FieldNames []string   // Ordered list of field names in the UDT
-	FieldTypes []TypeInfo // Corresponding type information for each field
+	Keyspace      string     // The keyspace where the UDT is defined
+	Name          string     // The name of the User Defined Type
+	FieldNames    []string   // Ordered list of field names in the UDT
+	FieldTypes    []TypeInfo // Corresponding type information for each field
+	fieldTypesRaw []string   // Raw string values for the field types
 }
 
 // ColumnOrder represents the ordering of a column with regard to its comparator.
@@ -298,7 +312,7 @@ func (s *schemaDescriber) getSchemaMetaForUpdate() *schemaMeta {
 // returns the cached KeyspaceMetadata held by the describer for the named
 // keyspace.
 func (s *schemaDescriber) getSchema(keyspaceName string) (*KeyspaceMetadata, error) {
-	if s.session.cfg.MetadataCacheMode == Disabled {
+	if s.session.cfg.Metadata.CacheMode == Disabled {
 		return s.fetchSchema(keyspaceName)
 	}
 	metadata, found := s.getSchemaMetaForRead().keyspaceMeta[keyspaceName]
@@ -370,7 +384,7 @@ func refreshSchemas(session *Session) error {
 		}
 	}()
 
-	if session.cfg.MetadataCacheMode == Disabled {
+	if session.cfg.Metadata.CacheMode == Disabled {
 		return nil
 	}
 	awaitErr := session.control.awaitSchemaAgreementWithTimeout(10 * time.Second)
@@ -396,7 +410,7 @@ func refreshSchemas(session *Session) error {
 	var aggregates map[string][]AggregateMetadata
 	var userTypes map[string][]UserTypeMetadata
 	var materializedViews map[string][]MaterializedViewMetadata
-	if session.cfg.MetadataCacheMode == Full {
+	if session.cfg.Metadata.CacheMode == Full {
 		tables, err = getAllTablesMetadata(session)
 		if err != nil {
 			refreshErr = fmt.Errorf("failed to retrieve table metadata: %w", err)
@@ -438,7 +452,7 @@ func refreshSchemas(session *Session) error {
 	var updatedKeyspaces []string
 	var droppedKeyspaces []string
 	for keyspaceName, keyspace := range keyspaces {
-		if session.cfg.MetadataCacheMode == Full {
+		if session.cfg.Metadata.CacheMode == Full {
 			compileMetadata(session,
 				keyspace,
 				tables[keyspaceName],
@@ -454,11 +468,15 @@ func refreshSchemas(session *Session) error {
 			newKeyspaces = append(newKeyspaces, keyspaceName)
 		} else {
 			newStrat := keyspace.placementStrategy
-			oldStrat := oldKeyspaceMeta[keyspaceName].placementStrategy
+			oldKs := oldKeyspaceMeta[keyspaceName]
+			oldStrat := oldKs.placementStrategy
 
 			if (newStrat == nil) != (oldStrat == nil) {
 				updatedKeyspaces = append(updatedKeyspaces, keyspaceName)
 			} else if newStrat != nil && newStrat.strategyKey() != oldStrat.strategyKey() {
+				updatedKeyspaces = append(updatedKeyspaces, keyspaceName)
+			} else if oldKs.DurableWrites != keyspace.DurableWrites {
+				// If the durable writes flag has changed, we need to notify the KeyspaceChangeListener
 				updatedKeyspaces = append(updatedKeyspaces, keyspaceName)
 			}
 		}
@@ -469,20 +487,73 @@ func refreshSchemas(session *Session) error {
 	refreshCacheElapsed := time.Since(start)
 	session.logger.Debug("Schema metadata cache refresh completed",
 		NewLogFieldString("duration", refreshCacheElapsed.String()))
+
+	sessionInitialized := session.initialized()
+
 	// Notify policy if it supports schema refresh notifications
-	if notifier, ok := session.policy.(schemaRefreshNotifier); ok {
+	notifier, supportsRefresh := session.policy.(schemaRefreshNotifier)
+	hasKeyspaceListener := session.schemaListeners.hasKeyspace() && sessionInitialized
+
+	// Notify the policy if it supports schema refresh notifications
+	if supportsRefresh {
 		notifier.schemaRefreshed(sd.getSchemaMetaForRead())
-	} else {
-		for _, createdKeyspace := range newKeyspaces {
-			session.policy.KeyspaceChanged(KeyspaceUpdateEvent{Keyspace: createdKeyspace, Change: SchemaChangeTypeCreated})
+	}
+
+	session.logger.Debug("Computed schema keyspace change events",
+		NewLogFieldInt("created_keyspaces_count", len(newKeyspaces)),
+		NewLogFieldInt("updated_keyspaces_count", len(updatedKeyspaces)),
+		NewLogFieldInt("dropped_keyspaces_count", len(droppedKeyspaces)),
+	)
+
+	// If we don't support schemaRefreshed OR we have listeners, we need to loop
+	if !supportsRefresh || hasKeyspaceListener {
+		for _, name := range newKeyspaces {
+			if !supportsRefresh {
+				session.policy.KeyspaceChanged(KeyspaceUpdateEvent{Keyspace: name, Change: SchemaChangeTypeCreated})
+			}
+			if hasKeyspaceListener {
+				session.schemaListeners.OnKeyspaceCreated(OnKeyspaceCreatedEvent{Keyspace: keyspaceMeta[name]})
+			}
 		}
-		for _, droppedKeyspace := range droppedKeyspaces {
-			session.policy.KeyspaceChanged(KeyspaceUpdateEvent{Keyspace: droppedKeyspace, Change: SchemaChangeTypeDropped})
+
+		for _, name := range droppedKeyspaces {
+			if !supportsRefresh {
+				session.policy.KeyspaceChanged(KeyspaceUpdateEvent{Keyspace: name, Change: SchemaChangeTypeDropped})
+			}
+			if hasKeyspaceListener {
+				session.schemaListeners.OnKeyspaceDropped(OnKeyspaceDroppedEvent{Keyspace: oldKeyspaceMeta[name]})
+			}
 		}
-		for _, updatedKeyspace := range updatedKeyspaces {
-			session.policy.KeyspaceChanged(KeyspaceUpdateEvent{Keyspace: updatedKeyspace, Change: SchemaChangeTypeUpdated})
+
+		for _, name := range updatedKeyspaces {
+			if !supportsRefresh {
+				session.policy.KeyspaceChanged(KeyspaceUpdateEvent{Keyspace: name, Change: SchemaChangeTypeUpdated})
+			}
+			if hasKeyspaceListener {
+				session.schemaListeners.OnKeyspaceUpdated(OnKeyspaceUpdatedEvent{
+					Old: oldKeyspaceMeta[name],
+					New: keyspaceMeta[name],
+				})
+			}
 		}
 	}
+
+	// If we have full metadata cache mode, notify the non-keyspace change listeners if they are set.
+	if session.cfg.Metadata.CacheMode == Full &&
+		session.schemaListeners.hasNonKeyspaceSchemaChangeListeners() &&
+		sessionInitialized {
+		start := time.Now()
+
+		handleFullSchemaChanges(session, oldKeyspaceMeta, keyspaceMeta)
+
+		elapsed := time.Since(start)
+		session.logger.Debug("Finished calling schema change listeners.",
+			NewLogFieldInt("old_keyspaces_count", len(oldKeyspaceMeta)),
+			NewLogFieldInt("new_keyspaces_count", len(keyspaceMeta)),
+			NewLogFieldString("duration", elapsed.String()),
+		)
+	}
+
 	return nil
 }
 
@@ -1269,17 +1340,16 @@ func getUserTypeMetadataFromIter(session *Session, iter *Iter) (map[string][]Use
 	rows := iter.Scanner()
 	for rows.Next() {
 		uType := UserTypeMetadata{}
-		var argumentTypes []string
 		err := rows.Scan(&uType.Keyspace,
 			&uType.Name,
 			&uType.FieldNames,
-			&argumentTypes,
+			&uType.fieldTypesRaw,
 		)
 		if err != nil {
 			return nil, err
 		}
-		uType.FieldTypes = make([]TypeInfo, len(argumentTypes))
-		for i, argumentType := range argumentTypes {
+		uType.FieldTypes = make([]TypeInfo, len(uType.fieldTypesRaw))
+		for i, argumentType := range uType.fieldTypesRaw {
 			uType.FieldTypes[i], err = session.types.typeInfoFromString(session.cfg.ProtoVersion, argumentType)
 			if err != nil {
 				// we don't error out completely for unknown types because we didn't before
@@ -1592,28 +1662,26 @@ func getFunctionsMetadataFromIter(session *Session, iter *Iter) (map[string][]Fu
 	rows := iter.Scanner()
 	for rows.Next() {
 		function := FunctionMetadata{}
-		var argumentTypes []string
-		var returnType string
 		err := rows.Scan(&function.Keyspace,
 			&function.Name,
-			&argumentTypes,
+			&function.argumentTypesRaw,
 			&function.ArgumentNames,
 			&function.Body,
 			&function.CalledOnNullInput,
 			&function.Language,
-			&returnType,
+			&function.returnTypeRaw,
 		)
 		if err != nil {
 			return nil, err
 		}
-		function.ReturnType, err = session.types.typeInfoFromString(session.cfg.ProtoVersion, returnType)
+		function.ReturnType, err = session.types.typeInfoFromString(session.cfg.ProtoVersion, function.returnTypeRaw)
 		if err != nil {
 			// we don't error out completely for unknown types because we didn't before
 			// and the caller might not care about this type
-			function.ReturnType = unknownTypeInfo(returnType)
+			function.ReturnType = unknownTypeInfo(function.returnTypeRaw)
 		}
-		function.ArgumentTypes = make([]TypeInfo, len(argumentTypes))
-		for i, argumentType := range argumentTypes {
+		function.ArgumentTypes = make([]TypeInfo, len(function.argumentTypesRaw))
+		for i, argumentType := range function.argumentTypesRaw {
 			function.ArgumentTypes[i], err = session.types.typeInfoFromString(session.cfg.ProtoVersion, argumentType)
 			if err != nil {
 				// we don't error out completely for unknown types because we didn't before
@@ -1701,35 +1769,32 @@ func getAggregatesMetadataFromIter(session *Session, iter *Iter) (map[string][]A
 	rows := iter.Scanner()
 	for rows.Next() {
 		aggregate := AggregateMetadata{}
-		var argumentTypes []string
-		var returnType string
-		var stateType string
 		err := rows.Scan(&aggregate.Keyspace,
 			&aggregate.Name,
-			&argumentTypes,
+			&aggregate.argumentTypesRaw,
 			&aggregate.finalFunc,
 			&aggregate.InitCond,
-			&returnType,
+			&aggregate.returnTypeRaw,
 			&aggregate.stateFunc,
-			&stateType,
+			&aggregate.stateTypeRaw,
 		)
 		if err != nil {
 			return nil, err
 		}
-		aggregate.ReturnType, err = session.types.typeInfoFromString(session.cfg.ProtoVersion, returnType)
+		aggregate.ReturnType, err = session.types.typeInfoFromString(session.cfg.ProtoVersion, aggregate.returnTypeRaw)
 		if err != nil {
 			// we don't error out completely for unknown types because we didn't before
 			// and the caller might not care about this type
-			aggregate.ReturnType = unknownTypeInfo(returnType)
+			aggregate.ReturnType = unknownTypeInfo(aggregate.returnTypeRaw)
 		}
-		aggregate.StateType, err = session.types.typeInfoFromString(session.cfg.ProtoVersion, stateType)
+		aggregate.StateType, err = session.types.typeInfoFromString(session.cfg.ProtoVersion, aggregate.stateTypeRaw)
 		if err != nil {
 			// we don't error out completely for unknown types because we didn't before
 			// and the caller might not care about this type
-			aggregate.StateType = unknownTypeInfo(stateType)
+			aggregate.StateType = unknownTypeInfo(aggregate.stateTypeRaw)
 		}
-		aggregate.ArgumentTypes = make([]TypeInfo, len(argumentTypes))
-		for i, argumentType := range argumentTypes {
+		aggregate.ArgumentTypes = make([]TypeInfo, len(aggregate.argumentTypesRaw))
+		for i, argumentType := range aggregate.argumentTypesRaw {
 			aggregate.ArgumentTypes[i], err = session.types.typeInfoFromString(session.cfg.ProtoVersion, argumentType)
 			if err != nil {
 				// we don't error out completely for unknown types because we didn't before
@@ -2048,4 +2113,312 @@ func isIdentifierChar(c byte) bool {
 		c == '.' ||
 		c == '_' ||
 		c == '&'
+}
+
+// Handles the full schema changes including table, user type, function, aggregate.
+func handleFullSchemaChanges(session *Session, oldKeyspaces, newKeyspaces map[string]*KeyspaceMetadata) {
+	for _, oldKsMeta := range oldKeyspaces {
+		newKsMeta, ok := newKeyspaces[oldKsMeta.Name]
+		if !ok {
+			// Skip, KeyspaceChangeListener is already notified in refreshSchemas()
+			continue
+		}
+
+		if session.schemaListeners.hasTable() {
+			handleSchemaTableChanges(session, oldKsMeta, newKsMeta)
+		}
+		if session.schemaListeners.hasUserType() {
+			handleSchemaUserTypeChanges(session, oldKsMeta, newKsMeta)
+		}
+		if session.schemaListeners.hasFunction() {
+			handleSchemaFunctionChanges(session, oldKsMeta, newKsMeta)
+		}
+		if session.schemaListeners.hasAggregate() {
+			handleSchemaAggregateChanges(session, oldKsMeta, newKsMeta)
+		}
+	}
+}
+
+// Computes the schema table changes and notifies the event listener if it is set.
+// It is expected that the TableChangeListener is set on the Session.
+func handleSchemaTableChanges(session *Session, oldKeyspace, newKeyspace *KeyspaceMetadata) {
+	var createdEvents []OnTableCreatedEvent
+	var droppedEvents []OnTableDroppedEvent
+	var updatedEvents []OnTableUpdatedEvent
+
+	for _, oldTableMeta := range oldKeyspace.Tables {
+		newTableMeta, ok := newKeyspace.Tables[oldTableMeta.Name]
+		if !ok {
+			droppedEvents = append(droppedEvents, OnTableDroppedEvent{Table: oldTableMeta})
+		} else {
+			if !compareTablesMetadata(oldTableMeta, newTableMeta) {
+				updatedEvents = append(updatedEvents, OnTableUpdatedEvent{Old: oldTableMeta, New: newTableMeta})
+			}
+		}
+	}
+
+	for _, newTableMeta := range newKeyspace.Tables {
+		_, ok := oldKeyspace.Tables[newTableMeta.Name]
+		if !ok {
+			createdEvents = append(createdEvents, OnTableCreatedEvent{Table: newTableMeta})
+		}
+	}
+
+	session.logger.Debug("Computed schema table change events",
+		NewLogFieldInt("created_table_events_count", len(createdEvents)),
+		NewLogFieldInt("updated_table_events_count", len(updatedEvents)),
+		NewLogFieldInt("dropped_table_events_count", len(droppedEvents)),
+	)
+
+	for _, updatedEvent := range updatedEvents {
+		session.schemaListeners.OnTableUpdated(updatedEvent)
+	}
+
+	for _, createdEvent := range createdEvents {
+		session.schemaListeners.OnTableCreated(createdEvent)
+	}
+
+	for _, droppedEvent := range droppedEvents {
+		session.schemaListeners.OnTableDropped(droppedEvent)
+	}
+}
+
+// Computes the schema aggregate changes and notifies the event listener if it is set.
+// It is expected that the AggregateChangeListener is set on the Session.
+func handleSchemaAggregateChanges(session *Session, oldKeyspace, newKeyspace *KeyspaceMetadata) {
+	var createdEvents []OnAggregateCreatedEvent
+	var droppedEvents []OnAggregateDroppedEvent
+	var updatedEvents []OnAggregateUpdatedEvent
+
+	for _, oldAggregateMeta := range oldKeyspace.Aggregates {
+		newAggregateMeta, ok := newKeyspace.Aggregates[oldAggregateMeta.Name]
+		if !ok {
+			droppedEvents = append(droppedEvents, OnAggregateDroppedEvent{Aggregate: oldAggregateMeta})
+		} else {
+			if !compareAggregateMetadata(oldAggregateMeta, newAggregateMeta) {
+				updatedEvents = append(updatedEvents, OnAggregateUpdatedEvent{Old: oldAggregateMeta, New: newAggregateMeta})
+			}
+		}
+	}
+
+	for _, newAggregateMeta := range newKeyspace.Aggregates {
+		_, ok := oldKeyspace.Aggregates[newAggregateMeta.Name]
+		if !ok {
+			createdEvents = append(createdEvents, OnAggregateCreatedEvent{Aggregate: newAggregateMeta})
+		}
+	}
+
+	session.logger.Debug("Computed schema table change events",
+		NewLogFieldInt("created_table_events_count", len(createdEvents)),
+		NewLogFieldInt("updated_table_events_count", len(updatedEvents)),
+		NewLogFieldInt("dropped_table_events_count", len(droppedEvents)),
+	)
+
+	for _, updatedEvent := range updatedEvents {
+		session.schemaListeners.OnAggregateUpdated(updatedEvent)
+	}
+
+	for _, createdEvent := range createdEvents {
+		session.schemaListeners.OnAggregateCreated(createdEvent)
+	}
+
+	for _, droppedEvent := range droppedEvents {
+		session.schemaListeners.OnAggregateDropped(droppedEvent)
+	}
+}
+
+// Computes the schema user type changes and notifies the event listener if it is set.
+// It is expected that the UserTypeChangeListener is set on the Session.
+func handleSchemaUserTypeChanges(session *Session, oldKeyspace, newKeyspace *KeyspaceMetadata) {
+	var createdEvents []OnUserTypeCreatedEvent
+	var droppedEvents []OnUserTypeDroppedEvent
+	var updatedEvents []OnUserTypeUpdatedEvent
+
+	for _, oldUserTypeMeta := range oldKeyspace.UserTypes {
+		newUserTypeMeta, ok := newKeyspace.UserTypes[oldUserTypeMeta.Name]
+		if !ok {
+			droppedEvents = append(droppedEvents, OnUserTypeDroppedEvent{UserType: oldUserTypeMeta})
+		} else {
+			if !compareUserTypeMetadata(oldUserTypeMeta, newUserTypeMeta) {
+				updatedEvents = append(updatedEvents, OnUserTypeUpdatedEvent{Old: oldUserTypeMeta, New: newUserTypeMeta})
+			}
+		}
+	}
+
+	for _, newUserTypeMeta := range newKeyspace.UserTypes {
+		_, ok := oldKeyspace.UserTypes[newUserTypeMeta.Name]
+		if !ok {
+			createdEvents = append(createdEvents, OnUserTypeCreatedEvent{UserType: newUserTypeMeta})
+		}
+	}
+
+	session.logger.Debug("Computed schema user type change events",
+		NewLogFieldInt("created_table_events_count", len(createdEvents)),
+		NewLogFieldInt("updated_table_events_count", len(updatedEvents)),
+		NewLogFieldInt("dropped_table_events_count", len(droppedEvents)),
+	)
+
+	for _, updatedEvent := range updatedEvents {
+		session.schemaListeners.OnUserTypeUpdated(updatedEvent)
+	}
+
+	for _, createdEvent := range createdEvents {
+		session.schemaListeners.OnUserTypeCreated(createdEvent)
+	}
+
+	for _, droppedEvent := range droppedEvents {
+		session.schemaListeners.OnUserTypeDropped(droppedEvent)
+	}
+}
+
+// Computes the schema function changes and notifies the event listener if it is set.
+// It is expected that the FunctionChangeListener is set on the Session.
+func handleSchemaFunctionChanges(session *Session, oldKeyspace, newKeyspace *KeyspaceMetadata) {
+	var createdEvents []OnFunctionCreatedEvent
+	var droppedEvents []OnFunctionDroppedEvent
+	var updatedEvents []OnFunctionUpdatedEvent
+
+	for _, oldFunctionMeta := range oldKeyspace.Functions {
+		newFunctionMeta, ok := newKeyspace.Functions[oldFunctionMeta.Name]
+		if !ok {
+			droppedEvents = append(droppedEvents, OnFunctionDroppedEvent{Function: oldFunctionMeta})
+		} else {
+			if !compareFunctionMetadata(oldFunctionMeta, newFunctionMeta) {
+				updatedEvents = append(updatedEvents, OnFunctionUpdatedEvent{Old: oldFunctionMeta, New: newFunctionMeta})
+			}
+		}
+	}
+
+	for _, newFunctionMeta := range newKeyspace.Functions {
+		_, ok := oldKeyspace.Functions[newFunctionMeta.Name]
+		if !ok {
+			createdEvents = append(createdEvents, OnFunctionCreatedEvent{Function: newFunctionMeta})
+		}
+	}
+
+	session.logger.Debug("Computed schema function change events",
+		NewLogFieldInt("created_table_events_count", len(createdEvents)),
+		NewLogFieldInt("updated_table_events_count", len(updatedEvents)),
+		NewLogFieldInt("dropped_table_events_count", len(droppedEvents)),
+	)
+
+	for _, updatedEvent := range updatedEvents {
+		session.schemaListeners.OnFunctionUpdated(updatedEvent)
+	}
+
+	for _, createdEvent := range createdEvents {
+		session.schemaListeners.OnFunctionCreated(createdEvent)
+	}
+
+	for _, droppedEvent := range droppedEvents {
+		session.schemaListeners.OnFunctionDropped(droppedEvent)
+	}
+}
+
+func compareTablesMetadata(tableA, tableB *TableMetadata) bool {
+	if tableA == tableB {
+		return true
+	}
+
+	return tableA != nil && tableB != nil &&
+		tableA.Name == tableB.Name &&
+		tableA.KeyValidator == tableB.KeyValidator &&
+		tableA.Comparator == tableB.Comparator &&
+		tableA.DefaultValidator == tableB.DefaultValidator &&
+		tableA.ValueAlias == tableB.ValueAlias &&
+		stringsSlicesEqual(tableA.KeyAliases, tableB.KeyAliases) &&
+		stringsSlicesEqual(tableA.ColumnAliases, tableB.ColumnAliases) &&
+		stringsSlicesEqual(tableA.OrderedColumns, tableB.OrderedColumns) &&
+		compareColumnMetadataSlices(tableA.PartitionKey, tableB.PartitionKey) &&
+		compareColumnMetadataSlices(tableA.ClusteringColumns, tableB.ClusteringColumns) &&
+		columnsEqual(tableA.Columns, tableB.Columns)
+}
+
+func compareColumnMetadata(columnA, columnB *ColumnMetadata) bool {
+	if columnA == columnB {
+		return true
+	}
+	return columnA != nil && columnB != nil &&
+		columnA.Table == columnB.Table &&
+		columnA.Name == columnB.Name &&
+		columnA.ComponentIndex == columnB.ComponentIndex &&
+		columnA.Kind == columnB.Kind &&
+		columnA.Validator == columnB.Validator &&
+		columnA.ClusteringOrder == columnB.ClusteringOrder &&
+		columnA.Order == columnB.Order &&
+		compareColumnIndexMetadata(&columnA.Index, &columnB.Index)
+}
+
+func compareColumnMetadataSlices(colsA, colsB []*ColumnMetadata) bool {
+	if len(colsA) != len(colsB) {
+		return false
+	}
+	for i := range colsA {
+		if !compareColumnMetadata(colsA[i], colsB[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func columnsEqual(colsA, colsB map[string]*ColumnMetadata) bool {
+	if len(colsA) != len(colsB) {
+		return false
+	}
+	for k, v := range colsA {
+		if !compareColumnMetadata(v, colsB[k]) {
+			return false
+		}
+	}
+	return true
+}
+
+func compareColumnIndexMetadata(indexA, indexB *ColumnIndexMetadata) bool {
+	if indexA == indexB {
+		return true
+	}
+
+	return indexA != nil && indexB != nil &&
+		indexA.Name == indexB.Name &&
+		indexA.Type == indexB.Type &&
+		compareMapStringInterface(indexA.Options, indexB.Options)
+}
+
+func compareAggregateMetadata(aggregateA, aggregateB *AggregateMetadata) bool {
+	if aggregateA == aggregateB {
+		return true
+	}
+
+	return aggregateA != nil && aggregateB != nil &&
+		aggregateA.finalFunc == aggregateB.finalFunc &&
+		aggregateA.InitCond == aggregateB.InitCond &&
+		aggregateA.returnTypeRaw == aggregateB.returnTypeRaw &&
+		aggregateA.stateFunc == aggregateB.stateFunc &&
+		aggregateA.stateTypeRaw == aggregateB.stateTypeRaw &&
+		stringsSlicesEqual(aggregateA.argumentTypesRaw, aggregateB.argumentTypesRaw)
+}
+
+func compareFunctionMetadata(functionA, functionB *FunctionMetadata) bool {
+	if functionA == functionB {
+		return true
+	}
+
+	return functionA != nil && functionB != nil &&
+		functionA.Body == functionB.Body &&
+		functionA.CalledOnNullInput == functionB.CalledOnNullInput &&
+		functionA.Language == functionB.Language &&
+		stringsSlicesEqual(functionA.ArgumentNames, functionB.ArgumentNames) &&
+		stringsSlicesEqual(functionA.argumentTypesRaw, functionB.argumentTypesRaw) &&
+		functionA.returnTypeRaw == functionB.returnTypeRaw
+}
+
+func compareUserTypeMetadata(userTypeA, userTypeB *UserTypeMetadata) bool {
+	if userTypeA == userTypeB {
+		return true
+	}
+
+	return userTypeA != nil && userTypeB != nil &&
+		userTypeA.Name == userTypeB.Name &&
+		stringsSlicesEqual(userTypeA.FieldNames, userTypeB.FieldNames) &&
+		stringsSlicesEqual(userTypeA.fieldTypesRaw, userTypeB.fieldTypesRaw)
 }

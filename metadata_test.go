@@ -756,3 +756,656 @@ func TestCompileMetadataWithAggregates(t *testing.T) {
 	require.Equal(t, TypeDouble, testAggNoFinalFunc.ReturnType.Type())
 	require.Equal(t, TypeDouble, testAggNoFinalFunc.StateType.Type())
 }
+
+func TestCompareTablesMetadata(t *testing.T) {
+	type testCase struct {
+		name           string
+		table1         *TableMetadata
+		table2         *TableMetadata
+		expectedEquals bool
+	}
+
+	tests := []testCase{
+		{
+			name:           "both_nil",
+			table1:         nil,
+			table2:         nil,
+			expectedEquals: true,
+		},
+		{
+			name:   "table1_nil",
+			table1: nil,
+			table2: &TableMetadata{
+				Name: "test_table",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "table2_nil",
+			table1: &TableMetadata{
+				Name: "test_table",
+			},
+			table2:         nil,
+			expectedEquals: false,
+		},
+		{
+			name: "different_Name",
+			table1: &TableMetadata{
+				Name: "test_table_1",
+			},
+			table2: &TableMetadata{
+				Name: "test_table_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_KeyValidator",
+			table1: &TableMetadata{
+				KeyValidator: "int",
+			},
+			table2: &TableMetadata{
+				KeyValidator: "float",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_Comparator",
+			table1: &TableMetadata{
+				Comparator: "int",
+			},
+			table2: &TableMetadata{
+				Comparator: "float",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_DefaultValidator",
+			table1: &TableMetadata{
+				DefaultValidator: "int",
+			},
+			table2: &TableMetadata{
+				DefaultValidator: "float",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_ValueAlias",
+			table1: &TableMetadata{
+				ValueAlias: "test_value_alias_1",
+			},
+			table2: &TableMetadata{
+				ValueAlias: "test_value_alias_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_KeyAliases",
+			table1: &TableMetadata{
+				KeyAliases: []string{"test_key_alias_1"},
+			},
+			table2: &TableMetadata{
+				KeyAliases: []string{"test_key_alias_2"},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_ColumnAliases",
+			table1: &TableMetadata{
+				ColumnAliases: []string{"test_column_alias_1"},
+			},
+			table2: &TableMetadata{
+				ColumnAliases: []string{"test_column_alias_2"},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_OrderedColumns",
+			table1: &TableMetadata{
+				OrderedColumns: []string{"test_ordered_column_1"},
+			},
+			table2: &TableMetadata{
+				OrderedColumns: []string{"test_ordered_column_2"},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_PartitionKey",
+			table1: &TableMetadata{
+				PartitionKey: []*ColumnMetadata{
+					{Name: "test_partition_key_1"},
+				},
+			},
+			table2: &TableMetadata{
+				PartitionKey: []*ColumnMetadata{
+					{Name: "test_partition_key_2"},
+				},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_ClusteringColumns",
+			table1: &TableMetadata{
+				ClusteringColumns: []*ColumnMetadata{
+					{Name: "col_1"},
+				},
+			},
+			table2: &TableMetadata{
+				ClusteringColumns: []*ColumnMetadata{
+					{Name: "col_2"},
+				},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_Columns",
+			table1: &TableMetadata{
+				Columns: map[string]*ColumnMetadata{
+					"col_1": {Name: "col_1"},
+				},
+			},
+			table2: &TableMetadata{
+				Columns: map[string]*ColumnMetadata{
+					"col_2": {Name: "col_2"},
+				},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "equals",
+			table1: &TableMetadata{
+				Name:             "test_table",
+				KeyValidator:     "int",
+				Comparator:       "int",
+				DefaultValidator: "int",
+				ValueAlias:       "test_value_alias_1",
+				KeyAliases:       []string{"test_key_alias_1"},
+				ColumnAliases:    []string{"test_column_alias_1"},
+				OrderedColumns:   []string{"test_ordered_column_1"},
+				PartitionKey: []*ColumnMetadata{
+					{Name: "test_partition_key_1"},
+				},
+				ClusteringColumns: []*ColumnMetadata{
+					{Name: "test_clustering_column_1"},
+				},
+				Columns: map[string]*ColumnMetadata{
+					"col_1": {Name: "col_1"},
+				},
+			},
+			table2: &TableMetadata{
+				Name:             "test_table",
+				KeyValidator:     "int",
+				Comparator:       "int",
+				DefaultValidator: "int",
+				ValueAlias:       "test_value_alias_1",
+				KeyAliases:       []string{"test_key_alias_1"},
+				ColumnAliases:    []string{"test_column_alias_1"},
+				OrderedColumns:   []string{"test_ordered_column_1"},
+				PartitionKey: []*ColumnMetadata{
+					{Name: "test_partition_key_1"},
+				},
+				ClusteringColumns: []*ColumnMetadata{
+					{Name: "test_clustering_column_1"},
+				},
+				Columns: map[string]*ColumnMetadata{
+					"col_1": {Name: "col_1"},
+				},
+			},
+			expectedEquals: true,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			equals := compareTablesMetadata(testCase.table1, testCase.table2)
+			require.Equal(t, testCase.expectedEquals, equals)
+		})
+	}
+}
+
+func TestCompareColumnMetadata(t *testing.T) {
+	type testCase struct {
+		name           string
+		column1        *ColumnMetadata
+		column2        *ColumnMetadata
+		expectedEquals bool
+	}
+
+	tests := []testCase{
+		{
+			name:           "both_nil",
+			column1:        nil,
+			column2:        nil,
+			expectedEquals: true,
+		},
+		{
+			name:    "column1_nil",
+			column1: nil,
+			column2: &ColumnMetadata{
+				Name: "test_column",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "column2_nil",
+			column1: &ColumnMetadata{
+				Name: "test_column",
+			},
+			column2:        nil,
+			expectedEquals: false,
+		},
+		{
+			name: "different_Name",
+			column1: &ColumnMetadata{
+				Name: "test_column_1",
+			},
+			column2: &ColumnMetadata{
+				Name: "test_column_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_Table",
+			column1: &ColumnMetadata{
+				Table: "test_table_1",
+			},
+			column2: &ColumnMetadata{
+				Table: "test_table_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_ComponentIndex",
+			column1: &ColumnMetadata{
+				ComponentIndex: 1,
+			},
+			column2: &ColumnMetadata{
+				ComponentIndex: 2,
+			},
+		},
+		{
+			name: "different_Kind",
+			column1: &ColumnMetadata{
+				Kind: ColumnPartitionKey,
+			},
+			column2: &ColumnMetadata{
+				Kind: ColumnClusteringKey,
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_Validator",
+			column1: &ColumnMetadata{
+				Validator: "test_validator_1",
+			},
+			column2: &ColumnMetadata{
+				Validator: "test_validator_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_ClusteringOrder",
+			column1: &ColumnMetadata{
+				ClusteringOrder: "ASC",
+			},
+			column2: &ColumnMetadata{
+				ClusteringOrder: "DESC",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_Order",
+			column1: &ColumnMetadata{
+				Order: ASC,
+			},
+			column2: &ColumnMetadata{
+				Order: DESC,
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_Index_Name",
+			column1: &ColumnMetadata{
+				Index: ColumnIndexMetadata{
+					Name: "test_index_1",
+				},
+			},
+			column2: &ColumnMetadata{
+				Index: ColumnIndexMetadata{
+					Name: "test_index_2",
+				},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_Index_Type",
+			column1: &ColumnMetadata{
+				Index: ColumnIndexMetadata{
+					Type: "type_1",
+				},
+			},
+			column2: &ColumnMetadata{
+				Index: ColumnIndexMetadata{
+					Type: "type_2",
+				},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_Index_Options",
+			column1: &ColumnMetadata{
+				Index: ColumnIndexMetadata{
+					Options: map[string]interface{}{
+						"test_option": "test_value",
+					},
+				},
+			},
+			column2: &ColumnMetadata{
+				Index: ColumnIndexMetadata{
+					Options: map[string]interface{}{
+						"test_option": "test_value_2",
+					},
+				},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "equals",
+			column1: &ColumnMetadata{
+				Keyspace:        "test_keyspace",
+				Table:           "test_table",
+				Name:            "test_column",
+				ComponentIndex:  1,
+				Kind:            ColumnClusteringKey,
+				Validator:       "test_validator",
+				Type:            intTypeInfo{},
+				ClusteringOrder: "ASC",
+				Order:           ASC,
+				Index: ColumnIndexMetadata{
+					Name: "test_index_1",
+					Type: "test_type",
+					Options: map[string]interface{}{
+						"test_option": "test_value",
+					},
+				},
+			},
+			column2: &ColumnMetadata{
+				Keyspace:        "test_keyspace",
+				Table:           "test_table",
+				Name:            "test_column",
+				ComponentIndex:  1,
+				Kind:            ColumnClusteringKey,
+				Validator:       "test_validator",
+				Type:            intTypeInfo{},
+				ClusteringOrder: "ASC",
+				Order:           ASC,
+				Index: ColumnIndexMetadata{
+					Name: "test_index_1",
+					Type: "test_type",
+					Options: map[string]interface{}{
+						"test_option": "test_value",
+					},
+				},
+			},
+			expectedEquals: true,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			equals := compareColumnMetadata(testCase.column1, testCase.column2)
+			require.Equal(t, testCase.expectedEquals, equals)
+		})
+	}
+}
+
+func TestCompareAggregateMetadata(t *testing.T) {
+	type testCase struct {
+		name           string
+		aggregate1     *AggregateMetadata
+		aggregate2     *AggregateMetadata
+		expectedEquals bool
+	}
+
+	tests := []testCase{
+		{
+			name:           "both_nil",
+			aggregate1:     nil,
+			aggregate2:     nil,
+			expectedEquals: true,
+		},
+		{
+			name:       "aggregate1_nil",
+			aggregate1: nil,
+			aggregate2: &AggregateMetadata{
+				Name: "test_aggregate",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "aggregate2_nil",
+			aggregate1: &AggregateMetadata{
+				Name: "test_aggregate",
+			},
+			aggregate2:     nil,
+			expectedEquals: false,
+		},
+		{
+			name: "different_finalFunc",
+			aggregate1: &AggregateMetadata{
+				finalFunc: "test_final_func_1",
+			},
+			aggregate2: &AggregateMetadata{
+				finalFunc: "test_final_func_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_InitCond",
+			aggregate1: &AggregateMetadata{
+				InitCond: "test_init_cond_1",
+			},
+			aggregate2: &AggregateMetadata{
+				InitCond: "test_init_cond_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_returnTypeRaw",
+			aggregate1: &AggregateMetadata{
+				returnTypeRaw: "test_return_type_1",
+			},
+			aggregate2: &AggregateMetadata{
+				returnTypeRaw: "test_return_type_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_stateFunc",
+			aggregate1: &AggregateMetadata{
+				stateFunc: "test_state_func_1",
+			},
+			aggregate2: &AggregateMetadata{
+				stateFunc: "test_state_func_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_stateTypeRaw",
+			aggregate1: &AggregateMetadata{
+				stateTypeRaw: "test_state_type_1",
+			},
+			aggregate2: &AggregateMetadata{
+				stateTypeRaw: "test_state_type_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_argumentTypesRaw",
+			aggregate1: &AggregateMetadata{
+				argumentTypesRaw: []string{"test_argument_type_1"},
+			},
+			aggregate2: &AggregateMetadata{
+				argumentTypesRaw: []string{"test_argument_type_2"},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_argumentTypesRaw_byLength",
+			aggregate1: &AggregateMetadata{
+				argumentTypesRaw: []string{"test_argument_type_1"},
+			},
+			aggregate2: &AggregateMetadata{
+				argumentTypesRaw: []string{"test_argument_type_1", "test_argument_type_2"},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "equals",
+			aggregate1: &AggregateMetadata{
+				finalFunc:        "test_final_func",
+				InitCond:         "0",
+				returnTypeRaw:    "test_return_type",
+				stateFunc:        "test_state_func",
+				stateTypeRaw:     "test_state_type",
+				argumentTypesRaw: []string{"test_argument_type_1", "test_argument_type_2"},
+			},
+			aggregate2: &AggregateMetadata{
+				finalFunc:        "test_final_func",
+				InitCond:         "0",
+				returnTypeRaw:    "test_return_type",
+				stateFunc:        "test_state_func",
+				stateTypeRaw:     "test_state_type",
+				argumentTypesRaw: []string{"test_argument_type_1", "test_argument_type_2"},
+			},
+			expectedEquals: true,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			equals := compareAggregateMetadata(testCase.aggregate1, testCase.aggregate2)
+			require.Equal(t, testCase.expectedEquals, equals)
+		})
+	}
+}
+
+func TestCompareFunctionMetadata(t *testing.T) {
+	type testCase struct {
+		name           string
+		function1      *FunctionMetadata
+		function2      *FunctionMetadata
+		expectedEquals bool
+	}
+
+	tests := []testCase{
+		{
+			name:           "both_nil",
+			function1:      nil,
+			function2:      nil,
+			expectedEquals: true,
+		},
+		{
+			name:      "function1_nil",
+			function1: nil,
+			function2: &FunctionMetadata{
+				Name: "test_function",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "function2_nil",
+			function1: &FunctionMetadata{
+				Name: "test_function",
+			},
+			function2:      nil,
+			expectedEquals: false,
+		},
+		{
+			name: "different_Body",
+			function1: &FunctionMetadata{
+				Body: "test_body_1",
+			},
+			function2: &FunctionMetadata{
+				Body: "test_body_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_CalledOnNullInput",
+			function1: &FunctionMetadata{
+				CalledOnNullInput: true,
+			},
+			function2: &FunctionMetadata{
+				CalledOnNullInput: false,
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_Language",
+			function1: &FunctionMetadata{
+				Language: "test_language_1",
+			},
+			function2: &FunctionMetadata{
+				Language: "test_language_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_ArgumentNames",
+			function1: &FunctionMetadata{
+				ArgumentNames: []string{"test_argument_name_1"},
+			},
+			function2: &FunctionMetadata{
+				ArgumentNames: []string{"test_argument_name_2"},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_argumentTypesRaw",
+			function1: &FunctionMetadata{
+				argumentTypesRaw: []string{"test_argument_type_1"},
+			},
+			function2: &FunctionMetadata{
+				argumentTypesRaw: []string{"test_argument_type_2"},
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "different_returnTypeRaw",
+			function1: &FunctionMetadata{
+				returnTypeRaw: "test_return_type_1",
+			},
+			function2: &FunctionMetadata{
+				returnTypeRaw: "test_return_type_2",
+			},
+			expectedEquals: false,
+		},
+		{
+			name: "equals",
+			function1: &FunctionMetadata{
+				Body:              "test_body",
+				CalledOnNullInput: true,
+				Language:          "test_language",
+				ArgumentNames:     []string{"test_argument_name"},
+				argumentTypesRaw:  []string{"test_argument_type"},
+				returnTypeRaw:     "test_return_type",
+			},
+			function2: &FunctionMetadata{
+				Body:              "test_body",
+				CalledOnNullInput: true,
+				Language:          "test_language",
+				ArgumentNames:     []string{"test_argument_name"},
+				argumentTypesRaw:  []string{"test_argument_type"},
+				returnTypeRaw:     "test_return_type",
+			},
+			expectedEquals: true,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			equals := compareFunctionMetadata(testCase.function1, testCase.function2)
+			require.Equal(t, testCase.expectedEquals, equals)
+		})
+	}
+}

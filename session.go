@@ -81,6 +81,15 @@ type Session struct {
 	// event handlers
 	nodeEvents *eventDebouncer
 
+	// host state and topology change listeners
+	hostListeners internalHostListeners
+
+	// schema change listeners
+	schemaListeners internalSchemaListeners
+
+	// session ready listeners
+	sessionReadyListeners internalSessionReadyListener
+
 	// ring metadata
 	useSystemSchema           bool
 	hasAggregatesAndFunctions bool
@@ -177,6 +186,33 @@ func NewSession(cfg ClusterConfig) (*Session, error) {
 	s.connectObserver = cfg.ConnectObserver
 	s.frameObserver = cfg.FrameHeaderObserver
 	s.streamObserver = cfg.StreamObserver
+
+	// Propogate node status, topology and schema change listeners
+	s.hostListeners = newInternalHostStateListeners(
+		s,
+		cfg.Metadata.HostListener.HostStateChangeListener,
+		cfg.Metadata.HostListener.TopologyChangeListener,
+	)
+
+	// Propogate schema change listeners
+	s.schemaListeners = newInternalSchemaChangeListeners(
+		cfg.Metadata.SchemaListener.KeyspaceChangeListener,
+		cfg.Metadata.SchemaListener.TableChangeListener,
+		cfg.Metadata.SchemaListener.UserTypeChangeListener,
+		cfg.Metadata.SchemaListener.FunctionChangeListener,
+		cfg.Metadata.SchemaListener.AggregateChangeListener,
+	)
+
+	if cfg.Metadata.CacheMode == Disabled && s.schemaListeners.hasSchemaChangeListeners() {
+		return nil, errors.New("Schema change listeners are not supported in Disabled metadata cache mode")
+	}
+
+	if cfg.Metadata.CacheMode == KeyspaceOnly && s.schemaListeners.hasNonKeyspaceSchemaChangeListeners() {
+		return nil, errors.New("Schema change listeners are not supported in KeyspaceOnly metadata cache mode")
+	}
+
+	// Propogate session ready listener
+	s.sessionReadyListeners = newInternalSessionReadyListener(cfg.Metadata.SessionReadyListener)
 
 	//Check the TLS Config before trying to connect to anything external
 	connCfg, err := connConfig(&s.cfg)
@@ -380,6 +416,8 @@ func (s *Session) init() error {
 	s.sessionStateMu.Lock()
 	s.isInitialized = true
 	s.sessionStateMu.Unlock()
+
+	s.sessionReadyListeners.OnSessionReady(s)
 
 	s.logger.Info("Session initialized successfully.")
 	return nil

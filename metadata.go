@@ -263,6 +263,7 @@ func (f *FunctionMetadata) Clone() *FunctionMetadata {
 		Language:          f.Language,
 		ReturnType:        f.ReturnType,
 		returnTypeRaw:     f.returnTypeRaw,
+		argumentTypesRaw:  f.argumentTypesRaw, // Shallow copy - unexported field
 	}
 
 	// Clone ArgumentTypes slice
@@ -275,12 +276,6 @@ func (f *FunctionMetadata) Clone() *FunctionMetadata {
 	if f.ArgumentNames != nil {
 		clone.ArgumentNames = make([]string, len(f.ArgumentNames))
 		copy(clone.ArgumentNames, f.ArgumentNames)
-	}
-
-	// Clone argumentTypesRaw slice
-	if f.argumentTypesRaw != nil {
-		clone.argumentTypesRaw = make([]string, len(f.argumentTypesRaw))
-		copy(clone.argumentTypesRaw, f.argumentTypesRaw)
 	}
 
 	return clone
@@ -315,29 +310,24 @@ func (a *AggregateMetadata) Clone() *AggregateMetadata {
 	}
 
 	clone := &AggregateMetadata{
-		Keyspace:      a.Keyspace,
-		Name:          a.Name,
-		FinalFunc:     a.FinalFunc,
-		InitCond:      a.InitCond,
-		ReturnType:    a.ReturnType,
-		StateFunc:     a.StateFunc,
-		StateType:     a.StateType,
-		stateFunc:     a.stateFunc,
-		finalFunc:     a.finalFunc,
-		stateTypeRaw:  a.stateTypeRaw,
-		returnTypeRaw: a.returnTypeRaw,
+		Keyspace:         a.Keyspace,
+		Name:             a.Name,
+		FinalFunc:        a.FinalFunc,
+		InitCond:         a.InitCond,
+		ReturnType:       a.ReturnType,
+		StateFunc:        a.StateFunc,
+		StateType:        a.StateType,
+		stateFunc:        a.stateFunc,
+		finalFunc:        a.finalFunc,
+		stateTypeRaw:     a.stateTypeRaw,
+		returnTypeRaw:    a.returnTypeRaw,
+		argumentTypesRaw: a.argumentTypesRaw, // Shallow copy - unexported field
 	}
 
 	// Clone ArgumentTypes slice
 	if a.ArgumentTypes != nil {
 		clone.ArgumentTypes = make([]TypeInfo, len(a.ArgumentTypes))
 		copy(clone.ArgumentTypes, a.ArgumentTypes)
-	}
-
-	// Clone argumentTypesRaw slice
-	if a.argumentTypesRaw != nil {
-		clone.argumentTypesRaw = make([]string, len(a.argumentTypesRaw))
-		copy(clone.argumentTypesRaw, a.argumentTypesRaw)
 	}
 
 	return clone
@@ -463,8 +453,9 @@ func (u *UserTypeMetadata) Clone() *UserTypeMetadata {
 	}
 
 	clone := &UserTypeMetadata{
-		Keyspace: u.Keyspace,
-		Name:     u.Name,
+		Keyspace:      u.Keyspace,
+		Name:          u.Name,
+		fieldTypesRaw: u.fieldTypesRaw, // Shallow copy - unexported field
 	}
 
 	// Clone FieldNames slice
@@ -477,12 +468,6 @@ func (u *UserTypeMetadata) Clone() *UserTypeMetadata {
 	if u.FieldTypes != nil {
 		clone.FieldTypes = make([]TypeInfo, len(u.FieldTypes))
 		copy(clone.FieldTypes, u.FieldTypes)
-	}
-
-	// Clone fieldTypesRaw slice
-	if u.fieldTypesRaw != nil {
-		clone.fieldTypesRaw = make([]string, len(u.fieldTypesRaw))
-		copy(clone.fieldTypesRaw, u.fieldTypesRaw)
 	}
 
 	return clone
@@ -626,8 +611,14 @@ func (s *schemaDescriber) getSchemaMetaForUpdate() *schemaMeta {
 	return metaNew
 }
 
-// returns the cached KeyspaceMetadata held by the describer for the named
-// keyspace.
+// getSchema returns the KeyspaceMetadata for the specified keyspace.
+//
+// Behavior by CacheMode:
+//   - Disabled: Fetches full metadata directly from Cassandra (calls fetchSchema)
+//   - Full: Returns cloned full metadata from cache
+//   - KeyspaceOnly: Returns cloned keyspace-level metadata from cache (no tables, functions, etc.)
+//
+// Returns a clone of the metadata to prevent external modifications to the cache.
 func (s *schemaDescriber) getSchema(keyspaceName string) (*KeyspaceMetadata, error) {
 	if s.session.cfg.Metadata.CacheMode == Disabled {
 		return s.fetchSchema(keyspaceName)
@@ -638,27 +629,40 @@ func (s *schemaDescriber) getSchema(keyspaceName string) (*KeyspaceMetadata, err
 		return nil, ErrKeyspaceDoesNotExist
 	}
 
-	return metadata, nil
+	return metadata.Clone(), nil
 }
 
-// returns all cached KeyspaceMetadata held by the describer
+// getAllSchema returns all KeyspaceMetadata for all keyspaces.
+//
+// Behavior by CacheMode:
+//   - Disabled: Fetches full metadata directly from Cassandra (calls fetchAllSchema with fetchFullMetadata=true)
+//   - Full: Returns cloned full metadata from cache
+//   - KeyspaceOnly: Returns cloned keyspace-level metadata from cache (no tables, functions, etc.)
+//
+// Returns clones of the metadata to prevent external modifications to the cache.
 func (s *schemaDescriber) getAllSchema() (map[string]*KeyspaceMetadata, error) {
 	if s.session.cfg.Metadata.CacheMode == Disabled {
-		return s.fetchAllSchema()
+		// Always fetch full metadata in Disabled mode to match fetchSchema() behavior
+		return s.fetchAllSchema(true)
 	}
 	metadata := s.getSchemaMetaForRead().keyspaceMeta
 	if metadata == nil {
 		return nil, fmt.Errorf("cache is nil, this should never happen - report this issue to the GoCQL project on Slack, JIRA or Github")
 	}
 
-	// Return a copy of the map to prevent external modifications to the cache
+	// Return clones of the metadata to prevent external modifications to the cache
 	result := make(map[string]*KeyspaceMetadata, len(metadata))
 	for k, v := range metadata {
-		result[k] = v
+		result[k] = v.Clone()
 	}
 	return result, nil
 }
 
+// fetchSchema retrieves full metadata for a specific keyspace directly from Cassandra.
+// Always fetches complete metadata including tables, columns, functions, aggregates,
+// user types, and materialized views, regardless of CacheMode setting.
+//
+// This method is called by getSchema when CacheMode is Disabled.
 func (s *schemaDescriber) fetchSchema(keyspaceName string) (*KeyspaceMetadata, error) {
 	var err error
 
@@ -703,7 +707,20 @@ func (s *schemaDescriber) fetchSchema(keyspaceName string) (*KeyspaceMetadata, e
 	return keyspace, nil
 }
 
-func (s *schemaDescriber) fetchAllSchema() (map[string]*KeyspaceMetadata, error) {
+// fetchAllSchema retrieves metadata for all keyspaces directly from Cassandra.
+//
+// Parameters:
+//   - fetchFullMetadata: When true, fetches complete metadata (tables, columns, functions, etc.).
+//     When false, fetches only keyspace-level metadata.
+//
+// This method is called by:
+//   - getAllSchema when CacheMode is Disabled (with fetchFullMetadata=true)
+//   - refreshSchemas for cache population (with fetchFullMetadata based on CacheMode)
+//
+// The fetchFullMetadata parameter decouples the fetch behavior from CacheMode,
+// allowing consistent behavior between fetchSchema and fetchAllSchema while
+// still supporting KeyspaceOnly mode for cache population.
+func (s *schemaDescriber) fetchAllSchema(fetchFullMetadata bool) (map[string]*KeyspaceMetadata, error) {
 	// query the system keyspace for schema data
 	keyspaceStart := time.Now()
 	keyspaces, err := getAllKeyspaceMetadata(s.session)
@@ -719,7 +736,9 @@ func (s *schemaDescriber) fetchAllSchema() (map[string]*KeyspaceMetadata, error)
 	var aggregates map[string][]AggregateMetadata
 	var userTypes map[string][]UserTypeMetadata
 	var materializedViews map[string][]MaterializedViewMetadata
-	if s.session.cfg.Metadata.CacheMode == Full {
+
+	// Fetch full metadata if requested
+	if fetchFullMetadata {
 		tables, err = getAllTablesMetadata(s.session)
 		if err != nil {
 			return nil, fmt.Errorf("failed to retrieve table metadata: %w", err)
@@ -747,8 +766,8 @@ func (s *schemaDescriber) fetchAllSchema() (map[string]*KeyspaceMetadata, error)
 	}
 
 	// organize the schema data
-	for keyspaceName, keyspace := range keyspaces {
-		if s.session.cfg.Metadata.CacheMode == Full {
+	if fetchFullMetadata {
+		for keyspaceName, keyspace := range keyspaces {
 			err = compileMetadata(s.session,
 				keyspace,
 				tables[keyspaceName],
@@ -795,7 +814,10 @@ func refreshSchemas(session *Session) error {
 	}
 
 	var keyspaces map[string]*KeyspaceMetadata
-	keyspaces, refreshErr = session.schemaDescriber.fetchAllSchema()
+	// Fetch full metadata only when CacheMode is Full
+	// This allows KeyspaceOnly mode to cache only keyspace-level metadata
+	fetchFull := session.cfg.Metadata.CacheMode == Full
+	keyspaces, refreshErr = session.schemaDescriber.fetchAllSchema(fetchFull)
 	if refreshErr != nil {
 		return refreshErr
 	}

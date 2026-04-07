@@ -105,6 +105,9 @@ type RegisteredTypes struct {
 	// the types are immutable
 	mut         sync.Mutex
 	initialized sync.Once
+
+	// encodeNilMapAsNull is a flag that indicates whether nullable UDTs are enabled.
+	encodeNilMapAsNull bool
 }
 
 func (r *RegisteredTypes) init() {
@@ -593,18 +596,60 @@ func (r *RegisteredTypes) Copy() *RegisteredTypes {
 
 	copy := &RegisteredTypes{}
 	copy.init()
+	copy.encodeNilMapAsNull = r.encodeNilMapAsNull
+	// Adding default types to the copy so collection type codecs will have a pointer to the copy instead of the original.
+	copy.addDefaultTypes()
 	for typ, t := range r.byType {
-		copy.byType[typ] = t
+		if _, exists := copy.byType[typ]; !exists {
+			copy.byType[typ] = t
+		}
 	}
 	for typ, t := range r.simples {
-		copy.simples[typ] = t
+		if _, exists := copy.simples[typ]; !exists {
+			copy.simples[typ] = t
+		}
 	}
 	for name, typ := range r.byString {
-		copy.byString[name] = typ
+		if _, exists := copy.byString[name]; !exists {
+			copy.byString[name] = typ
+		}
 	}
 	for name, t := range r.custom {
-		copy.custom[name] = t
+		if _, exists := copy.custom[name]; !exists {
+			copy.custom[name] = t
+		}
 	}
+	return copy
+}
+
+// WithNullableUDTs creates a shallow copy of the RegisteredTypes with the nullable UDTs flag set to the given value.
+//
+// If enabled, UDTs will be encoded as null CQL values when map is marshaled.
+// When disabled, UDTs will be encoded as initialized UDT values with all its fields set to NULL when passed map[string]any{}(nil).
+// For example, there are following UDT and table definitions:
+//
+//	CREATE TYPE my_udt (field_a text, field_b int);
+//	CREATE TABLE my_table (id int PRIMARY KEY, value frozen<my_udt>);
+//
+// If this option is disabled, the following code will insert a UDT object with both fields set to NULL:
+//
+//	var nilMap map[string]any = nil
+//	session.Query("INSERT INTO my_table (id, value) VALUES (?, ?)", 1, nilMap).Exec()
+//
+// The table my_table will contain:
+//
+//	id | value
+//	1  | {field_a: null, field_b: null}
+//
+// If this option is enabled, the same code will insert a NULL value:
+//
+//	id | value
+//	1  | null
+//
+// Default: false
+func (r *RegisteredTypes) WithNullableUDTs(enabled bool) *RegisteredTypes {
+	copy := r.Copy()
+	copy.encodeNilMapAsNull = enabled
 	return copy
 }
 

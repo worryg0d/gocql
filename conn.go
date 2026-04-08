@@ -2026,6 +2026,247 @@ func (c *Conn) awaitSchemaAgreementWithTimeout(ctx context.Context, timeout time
 	return fmt.Errorf("gocql: cluster schema versions not consistent: %+v", schemas)
 }
 
+// segmentWriter allows batching multiple frames into a signle segment before flushing them to the connection.
+type segmentWriter struct {
+	w    contextWriter
+	quit <-chan struct{}
+
+	// Holds write requests for the current segment.
+	writeRequests     []writeRequest
+	totalFramesLength int
+	writeCh           chan writeRequest
+
+	segmentCodec segmentCodec
+}
+
+func newSegmentWriter(w contextWriter, writeInterval time.Duration, quit <-chan struct{}, compressor Compressor) *segmentWriter {
+	sw := &segmentWriter{
+		w:            w,
+		quit:         quit,
+		writeCh:      make(chan writeRequest),
+		segmentCodec: newSegmentCodec(compressor),
+	}
+
+	go sw.runFlusher(writeInterval)
+
+	return sw
+}
+
+func (sw *segmentWriter) writeContext(ctx context.Context, frame []byte) (int, error) {
+	resultChan := make(chan writeResult, 1)
+	req := writeRequest{
+		resultChan: resultChan,
+		data:       frame,
+	}
+
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-sw.quit:
+		return 0, ErrConnectionClosed
+	case sw.writeCh <- req:
+		// Enqueued for writing
+	}
+
+	result := <-resultChan
+	return result.n, result.err
+}
+
+func (sw *segmentWriter) runFlusher(interval time.Duration) {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+
+	if !timer.Stop() {
+		<-timer.C
+	}
+
+	for {
+		select {
+		case <-sw.quit:
+			return
+		case req := <-sw.writeCh:
+			frame := req.data
+			if len(frame) > maxSegmentPayloadSize {
+				sw.flushBigFrameImmediately(req)
+			} else if sw.fitsSegment(frame) {
+				sw.appendWriteRequest(req)
+				timer.Reset(interval)
+			} else {
+				// Frame doesn't fit into current segment,
+				// so we need to flush the current one and start a new one
+				sw.flushCurrentSegment()
+				sw.reset()
+				sw.appendWriteRequest(req)
+				timer.Reset(interval)
+			}
+		case <-timer.C:
+			sw.flushCurrentSegment()
+			sw.reset()
+		}
+	}
+}
+
+func (sw *segmentWriter) appendWriteRequest(req writeRequest) {
+	sw.writeRequests = append(sw.writeRequests, req)
+	sw.totalFramesLength += len(req.data)
+}
+
+func (sw *segmentWriter) fitsSegment(frame []byte) bool {
+	return sw.totalFramesLength+len(frame) <= maxSegmentPayloadSize
+}
+
+// Flushes the current segment and writes the results to the result listeners.
+// Should be called before resetting the segment writer.
+func (sw *segmentWriter) flushCurrentSegment() {
+	framesBuf := make([]byte, 0, sw.totalFramesLength)
+	for _, req := range sw.writeRequests {
+		// TODO: interesting if compiler optimizes this
+		framesBuf = append(framesBuf, req.data...)
+	}
+
+	n, err := sw.encodeAndWrite(framesBuf)
+	if err != nil {
+		for _, req := range sw.writeRequests {
+			req.resultChan <- writeResult{
+				n:   0,
+				err: err,
+			}
+		}
+		return
+	}
+
+	for _, req := range sw.writeRequests {
+		req.resultChan <- writeResult{
+			n:   n,
+			err: nil,
+		}
+	}
+}
+
+func (sw *segmentWriter) reset() {
+	sw.writeRequests = nil
+	sw.totalFramesLength = 0
+}
+
+// Encodes a big frame which size is larger than maxSegmentPayloadSize
+// into multiple non self-contained segments and flushes them immediately
+func (sw *segmentWriter) flushBigFrameImmediately(req writeRequest) {
+	// Calculate the number of segment the frame will be split into
+	segmentsCount := 0
+	frame := req.data
+	frameLength := len(frame)
+	exactFit := frameLength%maxSegmentPayloadSize == 0
+	if exactFit {
+		segmentsCount = frameLength / maxSegmentPayloadSize
+	} else {
+		// An extra segment for the remainder of the frame
+		segmentsCount = frameLength/maxSegmentPayloadSize + 1
+	}
+
+	var flushErr error
+	var totalWritten int
+
+	for i := 0; i < segmentsCount; i++ {
+		// Calculate the length of the current frame part which will be encoded into a segment
+		partialFrameLength := 0
+		if i < segmentsCount-1 || exactFit {
+			partialFrameLength = maxSegmentPayloadSize
+		} else {
+			partialFrameLength = frameLength % maxSegmentPayloadSize
+		}
+		n, err := sw.encodeAndWrite(frame[:partialFrameLength])
+		if err != nil {
+			flushErr = err
+			break
+		}
+		totalWritten += n
+		frame = frame[partialFrameLength:]
+	}
+
+	req.resultChan <- writeResult{
+		n:   totalWritten,
+		err: flushErr,
+	}
+}
+
+// Encodes a frame into a segment and writes it to the underlying connection
+func (sw *segmentWriter) encodeAndWrite(frame []byte) (int, error) {
+	segmentBuf, err := sw.segmentCodec.encode(frame, false)
+	if err != nil {
+		return 0, err
+	}
+	n, err := sw.w.writeContext(context.Background(), segmentBuf)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// segmentReader allows reading segments from the underlying connection.
+// Implements ConnReader interface.
+// type segmentReader struct {
+// 	r ConnReader
+
+// 	segmentCodec segmentCodec
+
+// 	readBufferDecoded io.Reader
+// }
+
+// func newSegmentReader(r ConnReader, segmentCodec segmentCodec) *segmentReader {
+// 	return &segmentReader{
+// 		r:            r,
+// 		segmentCodec: segmentCodec,
+// 	}
+// }
+
+// func (sr *segmentReader) Write(b []byte) (n int, err error) {
+// 	return sr.r.Write(b)
+// }
+
+// func (sr *segmentReader) Close() error {
+// 	return sr.r.Close()
+// }
+
+// func (sr *segmentReader) LocalAddr() net.Addr {
+// 	return sr.r.LocalAddr()
+// }
+
+// func (sr *segmentReader) RemoteAddr() net.Addr {
+// 	return sr.r.RemoteAddr()
+// }
+
+// func (sr *segmentReader) SetDeadline(t time.Time) error {
+// 	return sr.r.SetDeadline(t)
+// }
+
+// func (sr *segmentReader) SetReadDeadline(t time.Time) error {
+// 	return sr.r.SetReadDeadline(t)
+// }
+
+// func (sr *segmentReader) SetWriteDeadline(t time.Time) error {
+// 	return sr.r.SetWriteDeadline(t)
+// }
+
+// func (sr *segmentReader) SetTimeout(timeout time.Duration) {
+// 	sr.r.SetTimeout(timeout)
+// }
+
+// func (sr *segmentReader) GetTimeout() time.Duration {
+// 	return sr.r.GetTimeout()
+// }
+
+// func (sr *segmentReader) Read(p []byte) (n int, err error) {
+
+// }
+
+// func (sr *segmentReader) readSegment() ([]byte, bool, error) {
+// 	segment, isSelfContained, err := sr.segmentCodec.decode(sr.r)
+// 	if err != nil {
+// 		return nil, false, err
+// 	}
+// 	return segment, isSelfContained, nil
+// }
+
 var (
 	ErrTimeoutNoResponse = errors.New("gocql: no response received from cassandra within timeout period")
 	ErrConnectionClosed  = errors.New("gocql: connection closed waiting for response")

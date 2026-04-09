@@ -48,6 +48,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/cassandra-gocql-driver/v2/internal/streams"
@@ -1602,5 +1603,55 @@ func TestConnProcessAllFramesInSingleSegment(t *testing.T) {
 		t.Fatal("Timed out waiting for frames")
 	case err := <-errCh:
 		require.NoError(t, err)
+	}
+}
+
+func TestSegmentWriter_MultipleFrames(t *testing.T) {
+	server, client, err := tcpConnPair()
+	require.NoError(t, err)
+
+	sw := newSegmentWriter(&deadlineContextWriter{
+		w:         client,
+		timeout:   time.Second * 2,
+		semaphore: make(chan struct{}, 1),
+		quit:      make(chan struct{}),
+	}, time.Microsecond*400, make(chan struct{}), nil)
+
+	doneReadCh := make(chan struct{})
+	// synced by doneReadCh
+	resultBuf := make([]byte, 0, 128)
+
+	go func() {
+		defer close(doneReadCh)
+		buf := make([]byte, 128)
+		n, err := server.Read(buf)
+		if err != nil && err != io.EOF {
+			t.Errorf("Failed to read segment: %v", err)
+			return
+		}
+		// Expected to read only a single segment with two frames inside
+		segmentCodec := newSegmentCodec(nil)
+		body, isSelfContained, err := segmentCodec.decode(bytes.NewReader(buf[:n]))
+		require.NoError(t, err)
+		require.True(t, isSelfContained)
+		resultBuf = append(resultBuf, body...)
+	}()
+
+	go func() {
+		sw.writeContext(context.Background(), []byte("one"))
+	}()
+
+	go func() {
+		sw.writeContext(context.Background(), []byte("two"))
+	}()
+
+	select {
+	case <-doneReadCh:
+		// Order of frames is not guaranteed, so we need to check both possible orders
+		if !assert.ObjectsAreEqual([]byte("onetwo"), resultBuf) && !assert.ObjectsAreEqual([]byte("twoone"), resultBuf) {
+			t.Fatal("Expected to read 'onetwo' or 'twoone', but got: ", string(resultBuf))
+		}
+	case <-time.After(time.Second * 1):
+		t.Fatal("Timed out waiting for segment to be read")
 	}
 }

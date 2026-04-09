@@ -4008,13 +4008,13 @@ func TestQueryCompressionNotWorthIt(t *testing.T) {
 	}
 
 	str := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()_+"
-	err := session.Query("INSERT INTO gocql_test.large_size_query (id, text_col) VALUES (?, ?)", "1", str).Exec()
+	err := session.Query("INSERT INTO gocql_test.compression_now_worth_it (id, text_col) VALUES (?, ?)", "1", str).Exec()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var result string
-	err = session.Query("SELECT text_col FROM gocql_test.large_size_query").Scan(&result)
+	err = session.Query("SELECT text_col FROM gocql_test.compression_now_worth_it").Scan(&result)
 	if err != nil {
 		t.Fatal(err)
 	}

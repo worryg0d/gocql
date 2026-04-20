@@ -37,7 +37,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/apache/cassandra-gocql-driver/v2/internal/lru"
@@ -342,19 +341,10 @@ func (s *startupCoordinator) setupConn(ctx context.Context) error {
 	}
 	defer cancel()
 
-	// Only for proto v5+.
-	// Indicates if STARTUP has been completed.
-	// github.com/apache/cassandra/blob/trunk/doc/native_protocol_v5.spec
-	// 2.3.1 Initial Handshake
-	// 	In order to support both v5 and earlier formats, the v5 framing format is not
-	//  applied to message exchanges before an initial handshake is completed.
-	startupCompleted := &atomic.Bool{}
-	startupCompleted.Store(false)
-
 	startupErr := make(chan error)
 	go func() {
 		for range s.frameTicker {
-			err := s.conn.recv(ctx, startupCompleted.Load())
+			err := s.conn.recv(ctx)
 			if err != nil {
 				select {
 				case startupErr <- err:
@@ -368,7 +358,7 @@ func (s *startupCoordinator) setupConn(ctx context.Context) error {
 
 	go func() {
 		defer close(s.frameTicker)
-		err := s.options(ctx, startupCompleted)
+		err := s.options(ctx)
 		select {
 		case startupErr <- err:
 		case <-ctx.Done():
@@ -426,7 +416,7 @@ func (s *startupCoordinator) checkProtocolRelatedError(err error) bool {
 	}
 }
 
-func (s *startupCoordinator) write(ctx context.Context, frame frameBuilder, startupCompleted *atomic.Bool) (frame, error) {
+func (s *startupCoordinator) write(ctx context.Context, frame frameBuilder) (frame, error) {
 	select {
 	case s.frameTicker <- struct{}{}:
 	case <-ctx.Done():
@@ -441,15 +431,15 @@ func (s *startupCoordinator) write(ctx context.Context, frame frameBuilder, star
 	return framer.parseFrame()
 }
 
-func (s *startupCoordinator) options(ctx context.Context, startupCompleted *atomic.Bool) error {
-	frame, err := s.write(ctx, &writeOptionsFrame{}, startupCompleted)
+func (s *startupCoordinator) options(ctx context.Context) error {
+	frame, err := s.write(ctx, &writeOptionsFrame{})
 	if err != nil {
 		return err
 	}
 
 	switch frame := frame.(type) {
 	case *supportedFrame:
-		return s.startup(ctx, frame.supported, startupCompleted)
+		return s.startup(ctx, frame.supported)
 	case error:
 		return frame
 	default:
@@ -457,7 +447,7 @@ func (s *startupCoordinator) options(ctx context.Context, startupCompleted *atom
 	}
 }
 
-func (s *startupCoordinator) startup(ctx context.Context, supported map[string][]string, startupCompleted *atomic.Bool) error {
+func (s *startupCoordinator) startup(ctx context.Context, supported map[string][]string) error {
 	m := map[string]string{
 		"CQL_VERSION":    s.conn.cfg.CQLVersion,
 		"DRIVER_NAME":    driverName,
@@ -479,7 +469,7 @@ func (s *startupCoordinator) startup(ctx context.Context, supported map[string][
 		}
 	}
 
-	frame, err := s.write(ctx, &writeStartupFrame{opts: m}, startupCompleted)
+	frame, err := s.write(ctx, &writeStartupFrame{opts: m})
 	if err != nil {
 		return err
 	}
@@ -488,21 +478,19 @@ func (s *startupCoordinator) startup(ctx context.Context, supported map[string][
 	case error:
 		return v
 	case *readyFrame:
-		// Startup is successfully completed, so we could use Native Protocol 5
-		startupCompleted.Store(true)
+		// If proto version is 5+ and startup is successfully completed, we should switch to segments
 		s.conn.maybeSwitchToSegments()
 		return nil
 	case *authenticateFrame:
-		// Startup is successfully completed, so we could use Native Protocol 5
-		startupCompleted.Store(true)
+		// If proto version is 5+ and startup is successfully completed, we should switch to segments
 		s.conn.maybeSwitchToSegments()
-		return s.authenticateHandshake(ctx, v, startupCompleted)
+		return s.authenticateHandshake(ctx, v)
 	default:
 		return NewErrProtocol("Unknown type of response to startup frame: %s", v)
 	}
 }
 
-func (s *startupCoordinator) authenticateHandshake(ctx context.Context, authFrame *authenticateFrame, startupCompleted *atomic.Bool) error {
+func (s *startupCoordinator) authenticateHandshake(ctx context.Context, authFrame *authenticateFrame) error {
 	if s.conn.auth == nil {
 		return fmt.Errorf("authentication required (using %q)", authFrame.class)
 	}
@@ -514,7 +502,7 @@ func (s *startupCoordinator) authenticateHandshake(ctx context.Context, authFram
 
 	req := &writeAuthResponseFrame{data: resp}
 	for {
-		frame, err := s.write(ctx, req, startupCompleted)
+		frame, err := s.write(ctx, req)
 		if err != nil {
 			return err
 		}
@@ -603,7 +591,7 @@ func (c *Conn) Close() {
 func (c *Conn) serve(ctx context.Context) {
 	var err error
 	for err == nil {
-		err = c.recv(ctx, true)
+		err = c.recv(ctx)
 	}
 
 	c.closeWithError(err)
@@ -675,19 +663,8 @@ func (c *Conn) heartBeat(ctx context.Context) {
 	}
 }
 
-func (c *Conn) recv(ctx context.Context, startupCompleted bool) error {
-	// If startup is completed and native proto 5+ is set up then we should
-	// unwrap payload from compressed/uncompressed frame
-	if startupCompleted && c.version > protoVersion4 {
-		return c.recvSegment(ctx)
-	}
-
-	return c.processFrame(ctx, c.r)
-}
-
-func (c *Conn) processFrame(ctx context.Context, r io.Reader) error {
+func (c *Conn) recv(ctx context.Context) error {
 	// not safe for concurrent reads
-
 	// read a full header, ignore timeouts, as this is being ran in a loop
 	// TODO: TCP level deadlines? or just query level deadlines?
 	if c.r.GetTimeout() > 0 {
@@ -696,7 +673,7 @@ func (c *Conn) processFrame(ctx context.Context, r io.Reader) error {
 
 	headStartTime := time.Now()
 	// were just reading headers over and over and copy bodies
-	head, err := readHeader(r, c.headerBuf[:])
+	head, err := readHeader(c.r, c.headerBuf[:])
 	headEndTime := time.Now()
 	if err != nil {
 		return err
@@ -720,7 +697,7 @@ func (c *Conn) processFrame(ctx context.Context, r io.Reader) error {
 	} else if head.stream == -1 {
 		// TODO: handle cassandra event frames, we shouldnt get any currently
 		framer := newFramer(c.compressor, c.version, c.session.types)
-		if err := framer.readFrame(r, &head); err != nil {
+		if err := framer.readFrame(c.r, &head); err != nil {
 			return err
 		}
 		go c.session.handleEvent(framer)
@@ -729,7 +706,7 @@ func (c *Conn) processFrame(ctx context.Context, r io.Reader) error {
 		// reserved stream that we dont use, probably due to a protocol error
 		// or a bug in Cassandra, this should be an error, parse it and return.
 		framer := newFramer(c.compressor, c.version, c.session.types)
-		if err := framer.readFrame(r, &head); err != nil {
+		if err := framer.readFrame(c.r, &head); err != nil {
 			return err
 		}
 
@@ -753,14 +730,14 @@ func (c *Conn) processFrame(ctx context.Context, r io.Reader) error {
 	c.mu.Unlock()
 	if call == nil || !ok {
 		c.logger.Warning("Received response for stream which has no handler.", NewLogFieldString("header", head.String()))
-		return c.discardFrame(r, head)
+		return c.discardFrame(c.r, head)
 	} else if head.stream != call.streamID {
 		panic(fmt.Sprintf("call has incorrect streamID: got %d expected %d", call.streamID, head.stream))
 	}
 
 	framer := newFramer(c.compressor, c.version, c.session.types)
 
-	err = framer.readFrame(r, &head)
+	err = framer.readFrame(c.r, &head)
 	if err != nil {
 		// only net errors should cause the connection to be closed. Though
 		// cassandra returning corrupt frames will be returned here as well.
@@ -797,36 +774,6 @@ func (c *Conn) releaseStream(call *callReq) {
 	}
 }
 
-func (c *Conn) recvSegment(ctx context.Context) error {
-	segmentCodec := newSegmentCodec(c.compressor)
-	frame, isSelfContained, err := segmentCodec.decode(c.r)
-	if err != nil {
-		return err
-	}
-
-	if isSelfContained {
-		return c.processAllFramesInSegment(ctx, bytes.NewReader(frame))
-	}
-
-	head, err := readHeader(bytes.NewReader(frame), c.headerBuf[:])
-	if err != nil {
-		return err
-	}
-
-	buf := bytes.NewBuffer(make([]byte, 0, head.length+frameHeadSize))
-	buf.Write(frame)
-
-	// Computing how many bytes of message left to read
-	bytesToRead := head.length - len(frame) + frameHeadSize
-
-	err = c.recvPartialFrames(buf, bytesToRead)
-	if err != nil {
-		return err
-	}
-
-	return c.processFrame(ctx, buf)
-}
-
 // recvPartialFrames reads proto v5 segments from Conn.r and writes decoded partial frames to dst.
 // It reads data until the bytesToRead is reached.
 // If Conn.compressor is not nil, it processes Compressed Format segments.
@@ -856,20 +803,13 @@ func (c *Conn) recvPartialFrames(dst *bytes.Buffer, bytesToRead int) error {
 	return nil
 }
 
-func (c *Conn) processAllFramesInSegment(ctx context.Context, r *bytes.Reader) error {
-	var err error
-	for r.Len() > 0 && err == nil {
-		err = c.processFrame(ctx, r)
-	}
-
-	return err
-}
-
 func (c *Conn) maybeSwitchToSegments() {
 	if c.version >= protoVersion5 {
 		// Use segments writter which basically batches multiple frames into a single segment before flushing them to the connection.
-		sw := newSegmentWriter(c.w, c.session.cfg.WriteCoalesceWaitTime, c.ctx.Done(), c.compressor)
-		c.w = sw
+		segmentWriter := newSegmentWriter(c.w, c.session.cfg.WriteCoalesceWaitTime, c.ctx.Done(), c.compressor)
+		segmentReader := newSegmentReader(c.r, newSegmentCodec(c.compressor))
+		c.w = segmentWriter
+		c.r = segmentReader
 	}
 }
 
@@ -2206,68 +2146,152 @@ func (sw *segmentWriter) encodeAndWrite(frame []byte, isSelfContained bool) (int
 
 // segmentReader allows reading segments from the underlying connection.
 // Implements ConnReader interface.
-// type segmentReader struct {
-// 	r ConnReader
+type segmentReader struct {
+	r ConnReader
 
-// 	segmentCodec segmentCodec
+	segmentCodec segmentCodec
 
-// 	readBufferDecoded io.Reader
-// }
+	readBufferDecoded *bytes.Reader
+	// reusable buffer for reading frame header
+	frameHeaderBuf [frameHeadSize]byte
+}
 
-// func newSegmentReader(r ConnReader, segmentCodec segmentCodec) *segmentReader {
-// 	return &segmentReader{
-// 		r:            r,
-// 		segmentCodec: segmentCodec,
-// 	}
-// }
+func newSegmentReader(r ConnReader, segmentCodec segmentCodec) *segmentReader {
+	return &segmentReader{
+		r:                 r,
+		segmentCodec:      segmentCodec,
+		readBufferDecoded: nil,
+	}
+}
 
-// func (sr *segmentReader) Write(b []byte) (n int, err error) {
-// 	return sr.r.Write(b)
-// }
+// why do we have a write method for reader lol
+func (sr *segmentReader) Write(b []byte) (n int, err error) {
+	return sr.r.Write(b)
+}
 
-// func (sr *segmentReader) Close() error {
-// 	return sr.r.Close()
-// }
+func (sr *segmentReader) Close() error {
+	return sr.r.Close()
+}
 
-// func (sr *segmentReader) LocalAddr() net.Addr {
-// 	return sr.r.LocalAddr()
-// }
+func (sr *segmentReader) LocalAddr() net.Addr {
+	return sr.r.LocalAddr()
+}
 
-// func (sr *segmentReader) RemoteAddr() net.Addr {
-// 	return sr.r.RemoteAddr()
-// }
+func (sr *segmentReader) RemoteAddr() net.Addr {
+	return sr.r.RemoteAddr()
+}
 
-// func (sr *segmentReader) SetDeadline(t time.Time) error {
-// 	return sr.r.SetDeadline(t)
-// }
+func (sr *segmentReader) SetDeadline(t time.Time) error {
+	return sr.r.SetDeadline(t)
+}
 
-// func (sr *segmentReader) SetReadDeadline(t time.Time) error {
-// 	return sr.r.SetReadDeadline(t)
-// }
+func (sr *segmentReader) SetReadDeadline(t time.Time) error {
+	return sr.r.SetReadDeadline(t)
+}
 
-// func (sr *segmentReader) SetWriteDeadline(t time.Time) error {
-// 	return sr.r.SetWriteDeadline(t)
-// }
+func (sr *segmentReader) SetWriteDeadline(t time.Time) error {
+	return sr.r.SetWriteDeadline(t)
+}
 
-// func (sr *segmentReader) SetTimeout(timeout time.Duration) {
-// 	sr.r.SetTimeout(timeout)
-// }
+func (sr *segmentReader) SetTimeout(timeout time.Duration) {
+	sr.r.SetTimeout(timeout)
+}
 
-// func (sr *segmentReader) GetTimeout() time.Duration {
-// 	return sr.r.GetTimeout()
-// }
+func (sr *segmentReader) GetTimeout() time.Duration {
+	return sr.r.GetTimeout()
+}
 
-// func (sr *segmentReader) Read(p []byte) (n int, err error) {
+func (sr *segmentReader) Read(p []byte) (n int, err error) {
+	// If we don't have a read buffer, or it's empty, read the first segment.
+	// If we have read all the frames from the current segment, read the next segment.
+	// If segment is non self-container, it will read all segments and read buffer will hold the full frame.
+	if sr.readBufferDecoded == nil || sr.readBufferDecoded.Len() == 0 {
+		err = sr.readSegment()
+		if err != nil {
+			return 0, err
+		}
+	}
 
-// }
+	return sr.readBufferDecoded.Read(p)
+}
 
-// func (sr *segmentReader) readSegment() ([]byte, bool, error) {
-// 	segment, isSelfContained, err := sr.segmentCodec.decode(sr.r)
-// 	if err != nil {
-// 		return nil, false, err
-// 	}
-// 	return segment, isSelfContained, nil
-// }
+func (sr *segmentReader) readSegment() error {
+	segment, isSelfContained, err := sr.segmentCodec.decode(sr.r)
+	if err != nil {
+		// TODO: does only network related errors should result in connection closure?
+		// var verr net.Error
+		// if errors.As(err, &verr) {
+		// 	return nil, false, verr
+		// }
+		return err
+	}
+
+	if isSelfContained {
+		// Might contains multiple frames so Read should be called mutiple times to read all of them
+		sr.readBufferDecoded = bytes.NewReader(segment)
+		return nil
+	}
+
+	frame, err := sr.readNonSelfContainedSegment(segment)
+	if err != nil {
+		return err
+	}
+
+	// Contains a single frame so we can read it all at once
+	sr.readBufferDecoded = bytes.NewReader(frame)
+	return nil
+}
+
+// Non self-contained segment contains only part of a bigger frame that is split into multiple segments.
+// Calling it results in a full frame being read into a single buffer.
+func (sr *segmentReader) readNonSelfContainedSegment(segment []byte) ([]byte, error) {
+	frameHeader, err := readHeader(bytes.NewBuffer(segment), sr.frameHeaderBuf[:])
+	if err != nil {
+		return nil, err
+	}
+
+	// Allocate a buffer to read the rest of the segment into
+	buf := bytes.NewBuffer(make([]byte, 0, frameHeader.length+frameHeadSize))
+	buf.Write(segment)
+
+	// Computing how many bytes of message left to read
+	// len(segment) is the length of the first frame we already read
+	bytesToRead := frameHeader.length - len(segment) + frameHeadSize
+	err = sr.readPartialFrames(buf, bytesToRead)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// Reads parts of a bigger frame that is split into multiple segments into a single buffer.
+// bytesToRead is the number of bytes left to read from the frame.
+// Called by readNonSelfContainedSegment.
+func (sr *segmentReader) readPartialFrames(dstBuf *bytes.Buffer, bytesToRead int) error {
+	for bytesToRead > 0 {
+		frame, isSelfContained, err := sr.segmentCodec.decode(sr.r)
+		if err != nil {
+			return err
+		}
+		// Expected to receive only non self-contained segments
+		if isSelfContained {
+			return fmt.Errorf("gocql: received self-contained segment, but expected non self-contained")
+		}
+		if totalLength := dstBuf.Len() + len(frame); totalLength > dstBuf.Cap() {
+			return fmt.Errorf("gocql: expected partial frame of length %d, got %d", dstBuf.Cap(), totalLength)
+		}
+		n, _ := dstBuf.Write(frame)
+		bytesToRead -= n
+	}
+
+	if bytesToRead < 0 {
+		// This should never happen actually
+		panic("gocql: something went wrong while reading partial frames")
+	}
+
+	return nil
+}
 
 var (
 	ErrTimeoutNoResponse = errors.New("gocql: no response received from cassandra within timeout period")

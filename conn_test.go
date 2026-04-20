@@ -732,7 +732,7 @@ func TestStream0(t *testing.T) {
 		logger: NewLogger(LogLevelNone),
 	}
 
-	err := conn.recv(context.Background(), false)
+	err := conn.recv(context.Background())
 	if err == nil {
 		t.Fatal("expected to get an error on stream 0")
 	} else if !strings.HasPrefix(err.Error(), expErr) {
@@ -1556,6 +1556,8 @@ func TestConnProcessAllFramesInSingleSegment(t *testing.T) {
 		},
 	}
 
+	c.r = newSegmentReader(c.r, newSegmentCodec(nil))
+
 	framer1 := newFramer(nil, protoVersion5, GlobalTypes)
 	err = req.buildFrame(framer1, 1)
 	require.NoError(t, err)
@@ -1582,7 +1584,7 @@ func TestConnProcessAllFramesInSingleSegment(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- c.recvSegment(ctx)
+		errCh <- c.recv(ctx)
 	}()
 
 	go func() {

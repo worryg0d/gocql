@@ -380,18 +380,14 @@ type framer struct {
 	customPayload map[string][]byte
 
 	types *RegisteredTypes
-
-	// v5 modern frames
-	segmentCodec *segmentCodec
 }
 
 func newFramer(compressor Compressor, version byte, r *RegisteredTypes) *framer {
 	buf := make([]byte, defaultBufSize)
 	f := &framer{
-		buf:          buf[:0],
-		readBuffer:   buf,
-		types:        r,
-		segmentCodec: newSegmentCodec(compressor),
+		buf:        buf[:0],
+		readBuffer: buf,
+		types:      r,
 	}
 	var flags byte
 	if compressor != nil && version < protoVersion5 {
@@ -2402,42 +2398,4 @@ func (f *framer) writeBytesMap(m map[string][]byte) {
 		f.writeString(k)
 		f.writeBytes(v)
 	}
-}
-
-func (f *framer) prepareModernLayout() error {
-	// Ensure protocol version is V5 or higher
-	if f.proto < protoVersion5 {
-		panic("Modern layout is not supported with version V4 or less")
-	}
-
-	selfContained := true
-
-	var (
-		adjustedBuf []byte
-		tempBuf     []byte
-		err         error
-	)
-
-	// Process the buffer in chunks if it exceeds the max payload size
-	for len(f.buf) > maxSegmentPayloadSize {
-		tempBuf, err = f.segmentCodec.encode(f.buf[:maxSegmentPayloadSize], false)
-		if err != nil {
-			return err
-		}
-
-		adjustedBuf = append(adjustedBuf, tempBuf...)
-		f.buf = f.buf[maxSegmentPayloadSize:]
-		selfContained = false
-	}
-
-	// Process the remaining buffer
-	tempBuf, err = f.segmentCodec.encode(f.buf, selfContained)
-	if err != nil {
-		return err
-	}
-
-	adjustedBuf = append(adjustedBuf, tempBuf...)
-	f.buf = adjustedBuf
-
-	return nil
 }

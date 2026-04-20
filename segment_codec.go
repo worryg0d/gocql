@@ -43,8 +43,8 @@ type segmentCodec struct {
 	compressed bool
 }
 
-func newSegmentCodec(compressor Compressor) *segmentCodec {
-	return &segmentCodec{
+func newSegmentCodec(compressor Compressor) segmentCodec {
+	return segmentCodec{
 		compressed: compressor != nil,
 		compressor: compressor,
 	}

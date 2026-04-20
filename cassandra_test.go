@@ -3300,7 +3300,7 @@ func TestNegativeStream(t *testing.T) {
 		return f.finish()
 	})
 
-	frame, err := conn.exec(context.Background(), writer, nil)
+	frame, err := conn.execInternal(context.Background(), writer, nil)
 	if err == nil {
 		t.Fatalf("expected to get an error on stream %d", stream)
 	} else if frame != nil {
@@ -3311,7 +3311,9 @@ func TestNegativeStream(t *testing.T) {
 func TestManualQueryPaging(t *testing.T) {
 	const rowsToInsert = 5
 
-	session := createSession(t)
+	session := createSession(t, func(cfg *ClusterConfig) {
+		cfg.Logger = NewLogger(LogLevelDebug)
+	})
 	defer session.Close()
 
 	if err := createTable(session, "CREATE TABLE gocql_test.testManualPaging (id int, count int, PRIMARY KEY (id))"); err != nil {

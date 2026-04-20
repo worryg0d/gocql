@@ -1528,8 +1528,7 @@ func TestConnProcessAllFramesInSingleSegment(t *testing.T) {
 		},
 		writeTimeout: time.Second * 10,
 		session: &Session{
-			types:        GlobalTypes,
-			segmentCodec: newSegmentCodec(nil),
+			types: GlobalTypes,
 		},
 		logger: &defaultLogger{},
 	}

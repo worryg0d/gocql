@@ -314,7 +314,7 @@ func (c *Conn) init(ctx context.Context, dialedHost *DialedHost) error {
 	c.r.SetTimeout(c.cfg.Timeout)
 
 	// dont coalesce startup frames
-	if c.session.cfg.WriteCoalesceWaitTime > 0 && !c.cfg.disableCoalesce && !dialedHost.DisableCoalesce {
+	if c.session.cfg.WriteCoalesceWaitTime > 0 && !c.cfg.disableCoalesce && !dialedHost.DisableCoalesce && c.cfg.ProtoVersion < protoVersion5 {
 		c.w = newWriteCoalescer(dialedHost.Conn, c.writeTimeout, c.session.cfg.WriteCoalesceWaitTime, ctx.Done())
 	}
 
@@ -433,7 +433,7 @@ func (s *startupCoordinator) write(ctx context.Context, frame frameBuilder, star
 		return nil, ctx.Err()
 	}
 
-	framer, err := s.conn.execInternal(ctx, frame, nil, startupCompleted.Load())
+	framer, err := s.conn.execInternal(ctx, frame, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -490,10 +490,12 @@ func (s *startupCoordinator) startup(ctx context.Context, supported map[string][
 	case *readyFrame:
 		// Startup is successfully completed, so we could use Native Protocol 5
 		startupCompleted.Store(true)
+		s.conn.maybeSwitchToSegments()
 		return nil
 	case *authenticateFrame:
 		// Startup is successfully completed, so we could use Native Protocol 5
 		startupCompleted.Store(true)
+		s.conn.maybeSwitchToSegments()
 		return s.authenticateHandshake(ctx, v, startupCompleted)
 	default:
 		return NewErrProtocol("Unknown type of response to startup frame: %s", v)
@@ -647,7 +649,7 @@ func (c *Conn) heartBeat(ctx context.Context) {
 		case <-timer.C:
 		}
 
-		framer, err := c.exec(context.Background(), &writeOptionsFrame{}, nil)
+		framer, err := c.execInternal(context.Background(), &writeOptionsFrame{}, nil)
 		if err != nil {
 			failures++
 			continue
@@ -796,7 +798,8 @@ func (c *Conn) releaseStream(call *callReq) {
 }
 
 func (c *Conn) recvSegment(ctx context.Context) error {
-	frame, isSelfContained, err := c.session.segmentCodec.decode(c.r)
+	segmentCodec := newSegmentCodec(c.compressor)
+	frame, isSelfContained, err := segmentCodec.decode(c.r)
 	if err != nil {
 		return err
 	}
@@ -830,8 +833,9 @@ func (c *Conn) recvSegment(ctx context.Context) error {
 func (c *Conn) recvPartialFrames(dst *bytes.Buffer, bytesToRead int) error {
 	var read int
 
+	segmentCodec := newSegmentCodec(c.compressor)
 	for read != bytesToRead {
-		frame, isSelfContained, err := c.session.segmentCodec.decode(c.r)
+		frame, isSelfContained, err := segmentCodec.decode(c.r)
 		if err != nil {
 			return fmt.Errorf("gocql: failed to read non self-contained frame: %w", err)
 		}
@@ -859,6 +863,14 @@ func (c *Conn) processAllFramesInSegment(ctx context.Context, r *bytes.Reader) e
 	}
 
 	return err
+}
+
+func (c *Conn) maybeSwitchToSegments() {
+	if c.version >= protoVersion5 {
+		// Use segments writter which basically batches multiple frames into a single segment before flushing them to the connection.
+		sw := newSegmentWriter(c.w, c.session.cfg.WriteCoalesceWaitTime, c.ctx.Done(), c.compressor)
+		c.w = sw
+	}
 }
 
 // ConnReader is like net.Conn but also allows to set timeout duration.
@@ -1188,11 +1200,7 @@ func (c *Conn) addCall(call *callReq) error {
 	return nil
 }
 
-func (c *Conn) exec(ctx context.Context, req frameBuilder, tracer Tracer) (*framer, error) {
-	return c.execInternal(ctx, req, tracer, true)
-}
-
-func (c *Conn) execInternal(ctx context.Context, req frameBuilder, tracer Tracer, startupCompleted bool) (*framer, error) {
+func (c *Conn) execInternal(ctx context.Context, req frameBuilder, tracer Tracer) (*framer, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
@@ -1253,13 +1261,7 @@ func (c *Conn) execInternal(ctx context.Context, req frameBuilder, tracer Tracer
 	}
 
 	var n int
-
-	if c.version > protoVersion4 && startupCompleted {
-		err = framer.prepareModernLayout()
-	}
-	if err == nil {
-		n, err = c.w.writeContext(ctx, framer.buf)
-	}
+	n, err = c.w.writeContext(ctx, framer.buf)
 	if err != nil {
 		// closeWithError will block waiting for this stream to either receive a response
 		// or for us to timeout, close the timeout chan here. Im not entirely sure
@@ -1453,7 +1455,7 @@ func (c *Conn) prepareStatement(ctx context.Context, stmt string, tracer Tracer,
 			// we won the race to do the load, if our context is canceled we shouldnt
 			// stop the load as other callers are waiting for it but this caller should get
 			// their context cancelled error.
-			framer, err := c.exec(c.ctx, prep, tracer)
+			framer, err := c.execInternal(c.ctx, prep, tracer)
 			if err != nil {
 				flight.err = err
 				c.session.stmtsLRU.remove(stmtCacheKey)
@@ -1626,7 +1628,7 @@ func (c *Conn) executeQuery(ctx context.Context, q *internalQuery) *Iter {
 		}
 	}
 
-	framer, err := c.exec(ctx, frame, qryOpts.trace)
+	framer, err := c.execInternal(ctx, frame, qryOpts.trace)
 	if err != nil {
 		iter.err = err
 		return iter
@@ -1764,7 +1766,7 @@ func (c *Conn) UseKeyspace(keyspace string) error {
 	q := &writeQueryFrame{statement: `USE "` + keyspace + `"`}
 	q.params.consistency = c.session.cons
 
-	framer, err := c.exec(c.ctx, q, nil)
+	framer, err := c.execInternal(c.ctx, q, nil)
 	if err != nil {
 		return err
 	}
@@ -1863,7 +1865,7 @@ func (c *Conn) executeBatch(ctx context.Context, b *internalBatch) *Iter {
 		}
 	}
 
-	framer, err := c.exec(ctx, req, b.batchOpts.trace)
+	framer, err := c.execInternal(ctx, req, b.batchOpts.trace)
 	if err != nil {
 		iter.err = err
 		return iter
@@ -2124,7 +2126,7 @@ func (sw *segmentWriter) flushCurrentSegment() {
 		framesBuf = append(framesBuf, req.data...)
 	}
 
-	n, err := sw.encodeAndWrite(framesBuf)
+	n, err := sw.encodeAndWrite(framesBuf, true)
 	if err != nil {
 		for _, req := range sw.writeRequests {
 			req.resultChan <- writeResult{
@@ -2174,7 +2176,7 @@ func (sw *segmentWriter) flushBigFrameImmediately(req writeRequest) {
 		} else {
 			partialFrameLength = frameLength % maxSegmentPayloadSize
 		}
-		n, err := sw.encodeAndWrite(frame[:partialFrameLength])
+		n, err := sw.encodeAndWrite(frame[:partialFrameLength], false)
 		if err != nil {
 			flushErr = err
 			break
@@ -2190,8 +2192,8 @@ func (sw *segmentWriter) flushBigFrameImmediately(req writeRequest) {
 }
 
 // Encodes a frame into a segment and writes it to the underlying connection
-func (sw *segmentWriter) encodeAndWrite(frame []byte) (int, error) {
-	segmentBuf, err := sw.segmentCodec.encode(frame, false)
+func (sw *segmentWriter) encodeAndWrite(frame []byte, isSelfContained bool) (int, error) {
+	segmentBuf, err := sw.segmentCodec.encode(frame, isSelfContained)
 	if err != nil {
 		return 0, err
 	}

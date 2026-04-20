@@ -66,7 +66,6 @@ type Session struct {
 	ringRefresher        *refreshDebouncer
 	stmtsLRU             *preparedLRU
 	types                *RegisteredTypes
-	segmentCodec         *segmentCodec
 
 	connCfg *ConnConfig
 
@@ -164,7 +163,6 @@ func NewSession(cfg ClusterConfig) (*Session, error) {
 		cancel:          cancel,
 		logger:          cfg.newLogger(),
 		trace:           cfg.Tracer,
-		segmentCodec:    newSegmentCodec(cfg.Compressor),
 	}
 	if cfg.RegisteredTypes == nil {
 		s.types = GlobalTypes.Copy()

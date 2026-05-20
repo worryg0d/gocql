@@ -683,18 +683,27 @@ func (c *Conn) recv(ctx context.Context, startupCompleted bool) error {
 	return c.processFrame(ctx, c.r)
 }
 
+func (c *Conn) readFrameHeader(r io.Reader) (frameHeader, error) {
+	// read a full header, ignore timeouts, as this is being ran in a loop
+	// TODO: TCP level deadlines? or just query level deadlines?
+	readTimeout := c.r.GetTimeout()
+	// Set timeout to 0 so it blocks indefinatly until the frame header is read.
+	if readTimeout > 0 {
+		c.r.SetTimeout(0)
+	}
+	head, err := readHeader(r, c.headerBuf[:])
+	if readTimeout > 0 {
+		c.r.SetTimeout(readTimeout)
+	}
+	return head, err
+}
+
 func (c *Conn) processFrame(ctx context.Context, r io.Reader) error {
 	// not safe for concurrent reads
 
-	// read a full header, ignore timeouts, as this is being ran in a loop
-	// TODO: TCP level deadlines? or just query level deadlines?
-	if c.r.GetTimeout() > 0 {
-		c.r.SetReadDeadline(time.Time{})
-	}
-
 	headStartTime := time.Now()
 	// were just reading headers over and over and copy bodies
-	head, err := readHeader(r, c.headerBuf[:])
+	head, err := c.readFrameHeader(r)
 	headEndTime := time.Now()
 	if err != nil {
 		return err

@@ -37,6 +37,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Tests of the round-robin host selection policy implementation
@@ -1098,4 +1100,15 @@ func TestHostPolicy_TokenAware_TopologyChangeUpdatesAllKeyspaces(t *testing.T) {
 			t.Error("other keyspace still has removed host in replica map - STALE after topology change!")
 		}
 	})
+}
+
+func Test_hostSelectionPolicyRequiresMetadataCache(t *testing.T) {
+	// Doesn't require metadata cache
+	assert.False(t, hostSelectionPolicyRequiresMetadata(RoundRobinHostPolicy()))
+	assert.False(t, hostSelectionPolicyRequiresMetadata(DCAwareRoundRobinPolicy("dc1")))
+	assert.False(t, hostSelectionPolicyRequiresMetadata(RackAwareRoundRobinPolicy("dc1", "rack1")))
+	assert.False(t, hostSelectionPolicyRequiresMetadata(SingleHostReadyPolicy(RoundRobinHostPolicy())))
+
+	// Requires metadata cache
+	assert.True(t, hostSelectionPolicyRequiresMetadata(TokenAwareHostPolicy(RoundRobinHostPolicy())))
 }

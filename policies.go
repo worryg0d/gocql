@@ -427,6 +427,9 @@ func NonLocalReplicasFallback() func(policy *tokenAwareHostPolicy) {
 }
 
 // ShuffledTokenAwareHostPolicy is a token aware host selection policy that shuffles replicas.
+//
+// Note: TokenAwareHostPolicy requires the metadata cache to be enabled.
+// See [ClusterConfig.Metadata] for more details.
 func ShuffledTokenAwareHostPolicy(fallback HostSelectionPolicy, opts ...func(*tokenAwareHostPolicy)) HostSelectionPolicy {
 	p := &tokenAwareHostPolicy{
 		fallback:                fallback,
@@ -442,6 +445,9 @@ func ShuffledTokenAwareHostPolicy(fallback HostSelectionPolicy, opts ...func(*to
 // TokenAwareHostPolicy is a token aware host selection policy, where hosts are
 // selected based on the partition key, so queries are sent to the host which
 // owns the partition. Fallback is used when routing information is not available.
+//
+// Note: TokenAwareHostPolicy requires the metadata cache to be enabled.
+// See [ClusterConfig.Metadata] for more details.
 func TokenAwareHostPolicy(fallback HostSelectionPolicy, opts ...func(*tokenAwareHostPolicy)) HostSelectionPolicy {
 	p := &tokenAwareHostPolicy{fallback: fallback}
 	for _, opt := range opts {
@@ -1080,3 +1086,16 @@ type SimpleSpeculativeExecution struct {
 
 func (sp *SimpleSpeculativeExecution) Attempts() int        { return sp.NumAttempts }
 func (sp *SimpleSpeculativeExecution) Delay() time.Duration { return sp.TimeoutDelay }
+
+// hostSelectionPolicyRequiresMetadata returns true if the host selection policy requires the metadata cache to be enabled.
+// [tokenAwareHostPolicy] is the only builtin policy that requires the metadata cache to be enabled.
+// Custom policies also require the metadata cache to be enabled.
+func hostSelectionPolicyRequiresMetadata(p HostSelectionPolicy) bool {
+	switch p.(type) {
+	case *rackAwareRR, *roundRobinHostPolicy, *singleHostReadyPolicy, *dcAwareRR:
+		return false
+	default:
+		// tokenAwareHostPolicy and custom policies are required to have the metadata cache enabled.
+		return true
+	}
+}

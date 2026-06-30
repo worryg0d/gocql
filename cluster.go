@@ -409,6 +409,8 @@ func (cfg *ClusterConfig) filterHost(host *HostInfo) bool {
 type MetadataConfig struct {
 	// CacheMode controls how the driver reads and caches schema metadata from Cassandra system tables.
 	//
+	// It is required to be enabled for [TokenAwareHostPolicy] and custom host selection policies.
+	//
 	// Also, it affects the behavior of schema change listeners.
 	//
 	// If CacheMode is [KeyspaceOnly], only [KeyspaceChangeListener] will be notified,

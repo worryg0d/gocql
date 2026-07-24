@@ -33,11 +33,13 @@ package gocql
 
 import (
 	"net"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/apache/cassandra-gocql-driver/v2/internal/ifacecheck"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -1102,13 +1104,71 @@ func TestHostPolicy_TokenAware_TopologyChangeUpdatesAllKeyspaces(t *testing.T) {
 	})
 }
 
-func Test_hostSelectionPolicyRequiresMetadataCache(t *testing.T) {
-	// Doesn't require metadata cache
-	assert.False(t, hostSelectionPolicyRequiresMetadata(RoundRobinHostPolicy()))
-	assert.False(t, hostSelectionPolicyRequiresMetadata(DCAwareRoundRobinPolicy("dc1")))
-	assert.False(t, hostSelectionPolicyRequiresMetadata(RackAwareRoundRobinPolicy("dc1", "rack1")))
-	assert.False(t, hostSelectionPolicyRequiresMetadata(SingleHostReadyPolicy(RoundRobinHostPolicy())))
+type hostSelectionPolicyCase struct {
+	name             string
+	policy           HostSelectionPolicy
+	requiresMetadata bool
+}
 
-	// Requires metadata cache
-	assert.True(t, hostSelectionPolicyRequiresMetadata(TokenAwareHostPolicy(RoundRobinHostPolicy())))
+// builtinHostSelectionPolicyCases lists every built-in HostSelectionPolicy constructor
+// and whether hostSelectionPolicyRequiresMetadata should return true for it.
+// When adding a new policy, add an entry here or Test_hostSelectionPolicyRequiresMetadataCache will fail.
+func builtinHostSelectionPolicyCases() []hostSelectionPolicyCase {
+	fallback := RoundRobinHostPolicy()
+	return []hostSelectionPolicyCase{
+		{"RoundRobinHostPolicy", fallback, false},
+		{"DCAwareRoundRobinPolicy", DCAwareRoundRobinPolicy("dc1"), false},
+		{"RackAwareRoundRobinPolicy", RackAwareRoundRobinPolicy("dc1", "rack1"), false},
+		{"SingleHostReadyPolicy", SingleHostReadyPolicy(fallback), false},
+		{"TokenAwareHostPolicy", TokenAwareHostPolicy(fallback), true},
+	}
+}
+
+func typeName(p HostSelectionPolicy) string {
+	t := reflect.TypeOf(p)
+	if t.Kind() == reflect.Ptr {
+		return "*" + t.Elem().Name()
+	}
+	return t.Name()
+}
+
+func Test_hostSelectionPolicyRequiresMetadataCache(t *testing.T) {
+	cases := builtinHostSelectionPolicyCases()
+	testedTypes := make(map[string]struct{}, len(cases))
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hostSelectionPolicyRequiresMetadata(tc.policy)
+			assert.Equal(t, tc.requiresMetadata, got)
+		})
+		testedTypes[typeName(tc.policy)] = struct{}{}
+	}
+
+	implementingTypeNames, err := ifacecheck.FindImplementers(ifacecheck.FindImplementersOptions{
+		Dir:           ".",
+		ImportPath:    "github.com/apache/cassandra-gocql-driver/v2",
+		InterfaceName: "HostSelectionPolicy",
+	})
+	if err != nil {
+		t.Fatalf("FindImplementers(HostSelectionPolicy): %v", err)
+	}
+
+	for _, typeName := range implementingTypeNames {
+		if _, ok := testedTypes[typeName]; !ok {
+			t.Fatalf("HostSelectionPolicy implementer %s has no test case; add it to builtinHostSelectionPolicyCases()", typeName)
+		}
+	}
+
+	for typeName := range testedTypes {
+		found := false
+		for _, implementingTypeName := range implementingTypeNames {
+			if typeName == implementingTypeName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("test case covers %s but no such type implements HostSelectionPolicy", typeName)
+		}
+	}
 }

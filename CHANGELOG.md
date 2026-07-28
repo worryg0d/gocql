@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0]
+
+### Added
+
+- Security-model discoverability (CASSANDRA-21464)
+- Improve host_source locking and ring refresh concurrency (CASSGO-121)
+- Add PreparedMetadata (Keyspace, Table) and IsPrepared fields to ObservedQuery, and parallel PreparedMetadata / IsPrepared slices to ObservedBatch, for statement-level observability without CQL parsing (CASSGO-119)
+- Query.Binding() method to override binding function for a query object.
+
+### Fixed
+- Correct protocol negotiation with non-Cassandra servers (CASSGO-131)
+- LZ4 test fails on arm64 (CASSGO-128)
+
+## [2.1.2]
+
+### Fixed
+
+- Prevent panic when using a HostFilter and keyspace is not replicated to every DC (CASSGO-122)
+- system.peers fallback doesn't work in some scenarios (CASSGO-126)
+- Many "Pool connection error" with small Session.Timeout (CASSGO-125)
+
 ## [2.1.1]
 
 ### Fixed

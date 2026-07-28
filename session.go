@@ -1086,6 +1086,8 @@ type queryRoutingInfo struct {
 	keyspace string
 
 	table string
+
+	prepared bool
 }
 
 func (qr *queryRoutingInfo) getKeyspace() string {
@@ -1098,6 +1100,12 @@ func (qr *queryRoutingInfo) getTable() string {
 	qr.mu.RLock()
 	defer qr.mu.RUnlock()
 	return qr.table
+}
+
+func (qr *queryRoutingInfo) isPrepared() bool {
+	qr.mu.RLock()
+	defer qr.mu.RUnlock()
+	return qr.prepared
 }
 
 func (q *Query) defaultsFromSession() {
@@ -1318,6 +1326,14 @@ func (q *Query) Idempotent(value bool) *Query {
 // For supported Go to CQL type conversions for query parameters, see Session.Query documentation.
 func (q *Query) Bind(v ...interface{}) *Query {
 	q.values = v
+	q.binding = nil
+	return q
+}
+
+// Binding sets a function for dynamic generation of query arguments.
+func (q *Query) Binding(binding func(q *QueryInfo) ([]interface{}, error)) *Query {
+	q.values = nil
+	q.binding = binding
 	return q
 }
 
@@ -2370,9 +2386,27 @@ func (s *Session) GetHosts() []*HostInfo {
 	return s.ring.allHosts()
 }
 
+// PreparedMetadata holds metadata extracted from a prepared statement
+// (returned by Cassandra during statement preparation). It is exposed via
+// ObservedQuery and ObservedBatch when the driver has prepared the statement.
+type PreparedMetadata struct {
+	Keyspace string
+	Table    string
+}
+
 type ObservedQuery struct {
 	Keyspace  string
 	Statement string
+
+	// PreparedMetadata holds keyspace/table information from prepared statement
+	// metadata returned by Cassandra. Only valid when IsPrepared is true; the
+	// zero value is reported otherwise (for example, for DDL statements or
+	// statements not prepared by the driver).
+	PreparedMetadata PreparedMetadata
+
+	// IsPrepared reports whether the statement was prepared by the driver and
+	// therefore whether PreparedMetadata holds valid information.
+	IsPrepared bool
 
 	// Values holds a slice of bound values for the query.
 	// Do not modify the values here, they are shared with multiple goroutines.
@@ -2417,6 +2451,15 @@ type QueryObserver interface {
 type ObservedBatch struct {
 	Keyspace   string
 	Statements []string
+
+	// PreparedMetadata holds prepared statement metadata for each batch statement.
+	// PreparedMetadata[i] corresponds to Statements[i]. Each entry is only valid
+	// when IsPrepared[i] is true; the zero value is reported otherwise.
+	PreparedMetadata []PreparedMetadata
+
+	// IsPrepared reports, for each batch statement, whether the statement was
+	// prepared by the driver. IsPrepared[i] corresponds to Statements[i].
+	IsPrepared []bool
 
 	// Values holds a slice of bound values for each statement.
 	// Values[i] are bound values passed to Statements[i].
@@ -2496,6 +2539,10 @@ var (
 
 // ErrProtocol represents a protocol-level error.
 type ErrProtocol struct{ error }
+
+func (e ErrProtocol) Unwrap() error {
+	return e.error
+}
 
 // NewErrProtocol creates a new protocol error with the specified format and arguments.
 func NewErrProtocol(format string, args ...interface{}) error {

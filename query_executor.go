@@ -26,6 +26,7 @@ package gocql
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -203,6 +204,16 @@ func (q *queryExecutor) do(ctx context.Context, qry internalRequest, hostIter Ne
 			return iter
 		default:
 			selectedHost.Mark(iter.err)
+		}
+
+		// Special case fore unprepared errors, we should retry on the next host
+		var unprepared *RequestErrUnprepared
+		if errors.As(iter.err, &unprepared) {
+			logger := q.pool.session.logger
+			logger.Debug("Failed to prepare query on host %s, retrying on next host", NewLogFieldString("address", host.ConnectAddress().String()))
+			lastErr = iter.err
+			selectedHost = hostIter()
+			continue
 		}
 
 		// Exit if the query was successful

@@ -1149,6 +1149,13 @@ type TestServer struct {
 	listen           net.Listener
 	nKillReq         int64
 
+	// alwaysUnprepared makes every PREPARE request for the "failover" query to response with UNPREPARED
+	alwaysUnprepared atomic.Bool
+	// nPrepareReq counts PREPARE requests received for the "failover" query
+	nPrepareReq int64
+	// nExecuteReq counts all EXECUTE requests received
+	nExecuteReq int64
+
 	protocol   byte
 	headerSize int
 	ctx        context.Context
@@ -1359,6 +1366,30 @@ func (srv *TestServer) process(conn net.Conn, reqFrame *framer, useProtoV5, star
 			name = name[:n]
 		}
 		switch strings.ToLower(name) {
+		case "failover":
+			// If alwaysUnprepared is set, the PREPARE request will respond with an UNPREPARED error
+			if srv.alwaysUnprepared.Load() {
+				atomic.AddInt64(&srv.nPrepareReq, 1)
+				respFrame.writeHeader(0, opError, head.stream)
+				respFrame.writeInt(ErrCodeUnprepared)
+				respFrame.writeString("unprepared")
+				respFrame.writeShortBytes(binary.BigEndian.AppendUint64(nil, 1))
+				break
+			}
+			atomic.AddInt64(&srv.nPrepareReq, 1)
+			respFrame.writeHeader(0, opResult, head.stream)
+			respFrame.writeInt(resultKindPrepared)
+			// <id>
+			respFrame.writeShortBytes(binary.BigEndian.AppendUint64(nil, 1))
+			// <metadata>
+			respFrame.writeInt(0) // <flags>
+			respFrame.writeInt(0) // <columns_count>
+			if srv.protocol >= protoVersion4 {
+				respFrame.writeInt(0) // <pk_count>
+			}
+			// <result_metadata>
+			respFrame.writeInt(int32(flagNoMetaData)) // <flags>
+			respFrame.writeInt(0)
 		case "nometadata":
 			respFrame.writeHeader(0, opResult, head.stream)
 			respFrame.writeInt(resultKindPrepared)
@@ -1399,6 +1430,7 @@ func (srv *TestServer) process(conn net.Conn, reqFrame *framer, useProtoV5, star
 			respFrame.writeString("unsupported query: " + name)
 		}
 	case opExecute:
+		atomic.AddInt64(&srv.nExecuteReq, 1)
 		b, err := reqFrame.readShortBytes()
 		if err != nil {
 			srv.errorLocked(err)
@@ -1612,4 +1644,47 @@ func TestConnProcessAllFramesInSingleSegment(t *testing.T) {
 	case err := <-errCh:
 		require.NoError(t, err)
 	}
+}
+
+// TestUnpreparedFailoverToNextHost covers the scenario where a host fails to
+// prepare a statement, fails again on the single reprepare attempt performed
+// by Conn.prepare, and the query is then retried against the next host, where it succeeds.
+//
+//  1. Host1 returns UNPREPARED in response to PREPARE.
+//  2. The driver reprepares on Host1.
+//  3. Host1 returns UNPREPARED again in response to the reprepare.
+//  4. The driver gives up on Host1 and retries the query on Host2, where it succeeds.
+func TestUnpreparedFailoverToNextHost(t *testing.T) {
+	ctx := context.Background()
+
+	// Host1 always responds to PREPARE with an UNPREPARED error, so both
+	// the initial prepare and the reprepare attempt fail
+	host1 := NewTestServerWithAddress("127.0.0.1:0", t, defaultProto, ctx)
+	defer host1.Stop()
+	host1.alwaysUnprepared.Store(true)
+
+	host2 := NewTestServerWithAddress("127.0.0.2:0", t, defaultProto, ctx)
+	defer host2.Stop()
+
+	// It defaults to round robin host policy, so the first host to be tried is host1, then host2
+	db, err := newTestSession(defaultProto, host1.Address, host2.Address)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// It should succeed on the second host
+	err = db.Query("select failover").Exec()
+	require.NoError(t, err)
+
+	// The first host to be tried is host1, then host2.
+	// We expect host1 to receive 2 PREPARE requests (initial + reprepare) and no EXECUTE requests
+	got := atomic.LoadInt64(&host1.nPrepareReq)
+	require.Equal(t, int64(2), got, "Expected host1 to receive 2 PREPARE requests, got %d", got)
+	got = atomic.LoadInt64(&host1.nExecuteReq)
+	require.Equal(t, int64(0), got, "Expected host1 to receive 0 EXECUTE requests, got %d", got)
+
+	// We expect host2 to receive 1 PREPARE request and 1 EXECUTE request
+	got = atomic.LoadInt64(&host2.nPrepareReq)
+	require.Equal(t, int64(1), got, "Expected host2 to receive 1 PREPARE request, got %d", got)
+	got = atomic.LoadInt64(&host2.nExecuteReq)
+	require.Equal(t, int64(1), got, "Expected host2 to receive 1 EXECUTE request, got %d", got)
 }

@@ -1473,6 +1473,26 @@ type inflightPrepare struct {
 	preparedStatment *preparedStatment
 }
 
+func (c *Conn) prepare(ctx context.Context, stmt string, tracer Tracer, keyspace string) (*preparedStatment, error) {
+	preparedStmt, err := c.prepareStatement(ctx, stmt, tracer, keyspace)
+	if err == nil {
+		return preparedStmt, nil
+	}
+
+	// TODO: Ideally we should skip unrecoverable errors and return them to the caller
+	// For now we will just try to reprepare the statement on the same host
+	// In case of an unprepared error, we should try to reprepare the statement on the same host
+	var unprepared *RequestErrUnprepared
+	if errors.As(err, &unprepared) {
+		preparedStmt, err = c.prepareStatement(ctx, stmt, tracer, keyspace)
+		if err == nil {
+			return preparedStmt, nil
+		}
+	}
+
+	return nil, err
+}
+
 func (c *Conn) prepareStatement(ctx context.Context, stmt string, tracer Tracer, keyspace string) (*preparedStatment, error) {
 	stmtCacheKey := c.session.stmtsLRU.keyFor(c.host.HostID(), keyspace, stmt)
 	flight, ok := c.session.stmtsLRU.execIfMissing(stmtCacheKey, func(lru *lru.Cache) *inflightPrepare {
@@ -1607,7 +1627,7 @@ func (c *Conn) executeQuery(ctx context.Context, q *internalQuery) *Iter {
 	if !qryOpts.skipPrepare && shouldPrepare(qryOpts.stmt) {
 		// Prepare all DML queries. Other queries can not be prepared.
 		var err error
-		info, err = c.prepareStatement(ctx, qryOpts.stmt, qryOpts.trace, usedKeyspace)
+		info, err = c.prepare(ctx, qryOpts.stmt, qryOpts.trace, usedKeyspace)
 		if err != nil {
 			iter.err = err
 			return iter
@@ -1770,9 +1790,12 @@ func (c *Conn) executeQuery(ctx context.Context, q *internalQuery) *Iter {
 		// is not consistent with regards to its schema.
 		return iter
 	case *RequestErrUnprepared:
+		// Evict the prepared statement from the cache
 		stmtCacheKey := c.session.stmtsLRU.keyFor(c.host.HostID(), usedKeyspace, qryOpts.stmt)
 		c.session.stmtsLRU.evictPreparedID(stmtCacheKey, x.StatementId)
-		return c.executeQuery(ctx, q)
+		iter.framer = framer
+		iter.err = x
+		return iter
 	case error:
 		iter.err = x
 		iter.framer = framer
@@ -1868,7 +1891,7 @@ func (c *Conn) executeBatch(ctx context.Context, b *internalBatch) *Iter {
 		batchStmt := &req.statements[i]
 
 		if len(entry.Args) > 0 || entry.binding != nil {
-			info, err := c.prepareStatement(ctx, entry.Stmt, b.batchOpts.trace, usedKeyspace)
+			info, err := c.prepare(ctx, entry.Stmt, b.batchOpts.trace, usedKeyspace)
 			if err != nil {
 				iter.err = err
 				return iter

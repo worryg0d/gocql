@@ -38,6 +38,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	inf "gopkg.in/inf.v0"
 )
 
@@ -65,6 +66,44 @@ func TestAuthentication(t *testing.T) {
 		t.Fatalf("Authentication error: %s", err)
 	}
 
+	session.Close()
+}
+
+// Implements the NegotiableAuthenticator interface.
+// TODO: Should it be part of the gocql package?
+type AllowAllAuthenticator struct{}
+
+func (p AllowAllAuthenticator) Challenge(req []byte) ([]byte, Authenticator, error) {
+	return nil, nil, nil
+}
+
+func (p AllowAllAuthenticator) Success(data []byte) error {
+	return nil
+}
+
+func (p AllowAllAuthenticator) AuthenticationMode() string {
+	return "Unauthenticated"
+}
+
+func (p AllowAllAuthenticator) ClassName() string {
+	return "org.apache.cassandra.auth.AllowAllAuthenticator"
+}
+
+func TestAuthenticationNegotiation(t *testing.T) {
+	if !*flagRunAuthTest {
+		t.Skip("Authentication is not configured in the target cluster")
+	}
+
+	cluster := createCluster()
+	cluster.AuthRegistry = NewDefaultAuthRegistry()
+	cluster.AuthRegistry.Register(PasswordAuthenticator{
+		Username: "cassandra",
+		Password: "cassandra",
+	})
+	cluster.AuthRegistry.Register(AllowAllAuthenticator{})
+
+	session, err := cluster.CreateSession()
+	require.NoError(t, err)
 	session.Close()
 }
 

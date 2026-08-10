@@ -165,6 +165,10 @@ type ClusterConfig struct {
 	// Default: nil
 	AuthProvider func(h *HostInfo) (Authenticator, error)
 
+	// AuthRegistry is the registry of authenticators to support authentication negotiation between the client and the server (CEP-50).
+	// Default: nil
+	AuthRegistry AuthRegistry
+
 	// Default retry policy to use for queries.
 	// Default: no retries.
 	RetryPolicy RetryPolicy

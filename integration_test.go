@@ -38,6 +38,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	inf "gopkg.in/inf.v0"
 )
 
@@ -1027,4 +1028,44 @@ func TestSmallTimeoutNoPoolErrors(t *testing.T) {
 		t.Fatalf("Found %d 'Pool connection error' messages - connections are timing out and reconnecting:\n%s",
 			errorCount, logOutput)
 	}
+}
+
+// Implements the NegotiableAuthenticator interface.
+type AllowAllAuthenticator struct{}
+
+func (p AllowAllAuthenticator) Challenge(req []byte) ([]byte, Authenticator, error) {
+	return nil, p, nil
+}
+
+func (p AllowAllAuthenticator) Success(data []byte) error {
+	fmt.Println("Success", data)
+	return nil
+}
+
+func (p AllowAllAuthenticator) AuthenticationMode() string {
+	return "Unauthenticated"
+}
+
+func (p AllowAllAuthenticator) ClassName() string {
+	return "org.apache.cassandra.auth.AllowAllAuthenticator"
+}
+
+func TestAuthenticationNegotiation(t *testing.T) {
+	cluster := createCluster()
+	cluster.Logger = NewLogger(LogLevelDebug)
+	cluster.AuthRegistry = NewDefaultAuthRegistry()
+	cluster.AuthRegistry.Register(PasswordAuthenticator{
+		Username: "1cassandra",
+		Password: "cassandra",
+	})
+	cluster.AuthRegistry.Register(AllowAllAuthenticator{})
+
+	session, err := cluster.CreateSession()
+	require.NoError(t, err)
+	defer session.Close()
+
+	var hostID string
+	err = session.Query("SELECT host_id FROM system.local").Scan(&hostID)
+	require.NoError(t, err)
+	t.Fatal(hostID)
 }

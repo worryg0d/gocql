@@ -74,6 +74,23 @@ type Authenticator interface {
 	Success(data []byte) error
 }
 
+// NegotiableAuthenticator is an authenticator that can be negotiated with the server.
+// It is an optional interface that can be implemented by the authenticator to allow for negotiation with the server.
+// If the authenticator implements this interface, it will be used to negotiate the authenticator with the server.
+type NegotiableAuthenticator interface {
+	Authenticator
+
+	// Java class name of the authenticator. Used as a payload in STARTUP frame.
+	//
+	// Example: "org.apache.cassandra.auth.PasswordAuthenticator"
+	ClassName() string
+
+	// Authentication mode of the authenticator.
+	//
+	// Example: "Unauthenticated", "Password", "MutualTLS"
+	AuthenticationMode() string
+}
+
 // PasswordAuthenticator specifies credentials to be used when authenticating.
 // It can be configured with an "allow list" of authenticator class names to avoid
 // attempting to authenticate with Cassandra if it doesn't provide an expected authenticator.
@@ -100,6 +117,14 @@ func (p PasswordAuthenticator) Challenge(req []byte) ([]byte, Authenticator, err
 
 func (p PasswordAuthenticator) Success(data []byte) error {
 	return nil
+}
+
+func (p PasswordAuthenticator) ClassName() string {
+	return "org.apache.cassandra.auth.PasswordAuthenticator"
+}
+
+func (p PasswordAuthenticator) AuthenticationMode() string {
+	return "Password"
 }
 
 // SslOptions configures TLS use.
@@ -482,6 +507,19 @@ func (s *startupCoordinator) startup(ctx context.Context, supported map[string][
 		}
 	}
 
+	// If the server supports authentication negotiation and the client has a registry of authenticators, then we should negotiate authentication.
+	_, supportsNegotiation := supported["AUTHENTICATORS"]
+	shouldNegotiateAuthentication := supportsNegotiation && s.conn.session.cfg.AuthRegistry != nil
+	if shouldNegotiateAuthentication {
+		authenticators := s.conn.session.cfg.AuthRegistry.Authenticators()
+		authClasses := make([]string, len(authenticators))
+		for i, authenticator := range authenticators {
+			authClasses[i] = authenticator.AuthenticationMode()
+		}
+		// The value should be a comma-separated list of Java class names according to the CEP-50 specification.
+		m["AUTHENTICATORS"] = strings.Join(authClasses, ",")
+	}
+
 	frame, err := s.write(ctx, &writeStartupFrame{opts: m}, startupCompleted)
 	if err != nil {
 		return err
@@ -497,14 +535,23 @@ func (s *startupCoordinator) startup(ctx context.Context, supported map[string][
 	case *authenticateFrame:
 		// Startup is successfully completed, so we could use Native Protocol 5
 		startupCompleted.Store(true)
-		return s.authenticateHandshake(ctx, v, startupCompleted)
+		return s.authenticateHandshake(ctx, v, startupCompleted, shouldNegotiateAuthentication)
 	default:
 		return NewErrProtocol("Unknown type of response to startup frame: %s", v)
 	}
 }
 
-func (s *startupCoordinator) authenticateHandshake(ctx context.Context, authFrame *authenticateFrame, startupCompleted *atomic.Bool) error {
-	if s.conn.auth == nil {
+func (s *startupCoordinator) authenticateHandshake(ctx context.Context, authFrame *authenticateFrame, startupCompleted *atomic.Bool, shouldNegotiateAuthentication bool) error {
+	if shouldNegotiateAuthentication {
+		auth, ok := s.conn.session.cfg.AuthRegistry.AuthenticatorFor(authFrame.class)
+		// It should never happen, but we should handle it gracefully.
+		if !ok {
+			return fmt.Errorf("the server requested an unknown authenticator during authentication negotiation: %q", authFrame.class)
+		}
+		// Set the authenticator to use for the authentication handshake.
+		s.conn.auth = auth
+		s.conn.logger.Debug("Authenticator selected for authentication negotiation", NewLogFieldString("authenticator", auth.ClassName()))
+	} else if s.conn.auth == nil {
 		return fmt.Errorf("authentication required (using %q)", authFrame.class)
 	}
 

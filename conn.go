@@ -80,12 +80,12 @@ type Authenticator interface {
 type NegotiableAuthenticator interface {
 	Authenticator
 
-	// Java class name of the authenticator. Used as a payload in STARTUP frame.
+	// Java class name of the authenticator. Used to match the authenticator with the one chosen by the server for authentication.
 	//
 	// Example: "org.apache.cassandra.auth.PasswordAuthenticator"
 	ClassName() string
 
-	// Authentication mode of the authenticator.
+	// Authentication mode of the authenticator. Used as a payload in STARTUP frame.
 	//
 	// Example: "Unauthenticated", "Password", "MutualTLS"
 	AuthenticationMode() string

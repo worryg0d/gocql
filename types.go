@@ -105,9 +105,6 @@ type RegisteredTypes struct {
 	// the types are immutable
 	mut         sync.Mutex
 	initialized sync.Once
-
-	// encodeNilMapAsNull is a flag that indicates whether nullable UDTs are enabled.
-	encodeNilMapAsNull bool
 }
 
 func (r *RegisteredTypes) init() {
@@ -596,33 +593,59 @@ func (r *RegisteredTypes) Copy() *RegisteredTypes {
 
 	copy := &RegisteredTypes{}
 	copy.init()
-	copy.encodeNilMapAsNull = r.encodeNilMapAsNull
-	// Adding default types to the copy so collection type codecs will have a pointer to the copy instead of the original.
-	copy.addDefaultTypes()
 	for typ, t := range r.byType {
-		if _, exists := copy.byType[typ]; !exists {
-			copy.byType[typ] = t
-		}
+		copy.byType[typ] = copy.rebind(t, r)
 	}
 	for typ, t := range r.simples {
-		if _, exists := copy.simples[typ]; !exists {
-			copy.simples[typ] = t
-		}
+		copy.simples[typ] = t
 	}
 	for name, typ := range r.byString {
-		if _, exists := copy.byString[name]; !exists {
-			copy.byString[name] = typ
-		}
+		copy.byString[name] = typ
 	}
 	for name, t := range r.custom {
-		if _, exists := copy.custom[name]; !exists {
-			copy.custom[name] = t
-		}
+		copy.custom[name] = copy.rebind(t, r)
 	}
 	return copy
 }
 
+// rebind returns t pointing at r instead of from if t is one of the built-in
+// codecs that keep a reference to their RegisteredTypes. They use it to parse
+// nested types from type strings, so a copy must not keep resolving nested
+// types through the registry it was copied from.
+// Codecs that are not built in are returned unchanged.
+func (r *RegisteredTypes) rebind(t CQLType, from *RegisteredTypes) CQLType {
+	switch c := t.(type) {
+	case listSetCQLType:
+		if c.types == from {
+			c.types = r
+		}
+		return c
+	case mapCQLType:
+		if c.types == from {
+			c.types = r
+		}
+		return c
+	case tupleCQLType:
+		if c.types == from {
+			c.types = r
+		}
+		return c
+	case udtCQLType:
+		if c.types == from {
+			c.types = r
+		}
+		return c
+	case vectorCQLType:
+		if c.types == from {
+			c.types = r
+		}
+		return c
+	}
+	return t
+}
+
 // WithNullableUDTs creates a shallow copy of the RegisteredTypes with the nullable UDTs flag set to the given value.
+// It has no effect if the UDT type was registered with a custom CQLType instead of the built-in one.
 //
 // If enabled, UDTs will be encoded as null CQL values when map is marshaled.
 // When disabled, UDTs will be encoded as initialized UDT values with all its fields set to NULL when passed map[string]any{}(nil).
@@ -649,7 +672,11 @@ func (r *RegisteredTypes) Copy() *RegisteredTypes {
 // Default: false
 func (r *RegisteredTypes) WithNullableUDTs(enabled bool) *RegisteredTypes {
 	copy := r.Copy()
-	copy.encodeNilMapAsNull = enabled
+	// the copy was just created, so no lock is needed to change it
+	if u, ok := copy.byType[TypeUDT].(udtCQLType); ok {
+		u.encodeNilMapAsNull = enabled
+		copy.byType[TypeUDT] = u
+	}
 	return copy
 }
 

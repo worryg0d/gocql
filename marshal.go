@@ -2719,6 +2719,11 @@ type UDTUnmarshaler interface {
 
 type udtCQLType struct {
 	types *RegisteredTypes
+
+	// encodeNilMapAsNull enables encoding nil map[string]interface{} values as
+	// CQL NULL. The legacy behavior is to encode them as initialized UDTs with
+	// all fields set to NULL. It is copied into every UDTTypeInfo built by this codec.
+	encodeNilMapAsNull bool
 }
 
 // Params returns the types to build the slice of params for TypeInfoFromParams.
@@ -2752,7 +2757,7 @@ func (u udtCQLType) TypeInfoFromParams(proto int, params []interface{}) (TypeInf
 		Keyspace:           keyspace,
 		Name:               name,
 		Elements:           elements,
-		encodeNilMapAsNull: u.types.encodeNilMapAsNull,
+		encodeNilMapAsNull: u.encodeNilMapAsNull,
 	}, nil
 }
 
@@ -2772,7 +2777,7 @@ func (u udtCQLType) TypeInfoFromString(proto int, name string) (TypeInfo, error)
 		ti := UDTTypeInfo{
 			Keyspace:           parts[0],
 			Name:               string(name),
-			encodeNilMapAsNull: u.types.encodeNilMapAsNull,
+			encodeNilMapAsNull: u.encodeNilMapAsNull,
 		}
 		ti.Elements = make([]UDTField, 0, len(parts)-2)
 		for i := 2; i < len(parts); i++ {
@@ -2802,7 +2807,7 @@ func (u udtCQLType) TypeInfoFromString(proto int, name string) (TypeInfo, error)
 	}
 	// we can't get the name or anything so we'll just try to parse the elements
 	ti := UDTTypeInfo{
-		encodeNilMapAsNull: u.types.encodeNilMapAsNull,
+		encodeNilMapAsNull: u.encodeNilMapAsNull,
 	}
 	ti.Elements = make([]UDTField, 0, len(parts))
 	for _, part := range parts {

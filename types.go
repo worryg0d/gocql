@@ -624,8 +624,8 @@ func (r *RegisteredTypes) Copy() *RegisteredTypes {
 
 // WithNullableUDTs creates a shallow copy of the RegisteredTypes with the nullable UDTs flag set to the given value.
 //
-// If enabled, UDTs will be encoded as null CQL values when map is marshaled.
-// When disabled, UDTs will be encoded as initialized UDT values with all its fields set to NULL when passed map[string]any{}(nil).
+// If enabled, a nil map[string]interface{} bound to a UDT is encoded as CQL NULL.
+// When disabled, UDTs will be encoded as initialized UDT values with all its fields set to NULL when passed map[string]any(nil).
 // For example, there are following UDT and table definitions:
 //
 //	CREATE TYPE my_udt (field_a text, field_b int);

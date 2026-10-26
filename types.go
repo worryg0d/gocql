@@ -644,11 +644,14 @@ func (r *RegisteredTypes) rebind(t CQLType, from *RegisteredTypes) CQLType {
 	return t
 }
 
-// WithNullableUDTs creates a shallow copy of the RegisteredTypes with the nullable UDTs flag set to the given value.
-// It has no effect if the UDT type was registered with a custom CQLType instead of the built-in one.
+// WithNilMapAsNullUDT creates a shallow copy of the RegisteredTypes with CQL NULL encoding of nil maps for UDT columns.
 //
-// If enabled, UDTs will be encoded as null CQL values when map is marshaled.
-// When disabled, UDTs will be encoded as initialized UDT values with all its fields set to NULL when passed map[string]any{}(nil).
+// If enabled, a nil map[string]interface{} bound to a UDT is encoded as CQL NULL.
+//
+// IMPORTANT: Rows written with legacy behavior will remain non-NULL, so mixing legacy and new behavior on the same table
+// yields different stored values for the same input.
+//
+// When disabled, UDTs will be encoded as initialized UDT values with all its fields set to NULL when passed map[string]any(nil).
 // For example, there are following UDT and table definitions:
 //
 //	CREATE TYPE my_udt (field_a text, field_b int);
@@ -670,7 +673,7 @@ func (r *RegisteredTypes) rebind(t CQLType, from *RegisteredTypes) CQLType {
 //	1  | null
 //
 // Default: false
-func (r *RegisteredTypes) WithNullableUDTs(enabled bool) *RegisteredTypes {
+func (r *RegisteredTypes) WithNilMapAsNullUDT(enabled bool) *RegisteredTypes {
 	copy := r.Copy()
 	// the copy was just created, so no lock is needed to change it
 	if u, ok := copy.byType[TypeUDT].(udtCQLType); ok {

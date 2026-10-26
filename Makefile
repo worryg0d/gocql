@@ -56,7 +56,8 @@ ifneq (${JAVA17_HOME},)
 endif
 
 ifneq (${JAVA_HOME},)
-	export JAVA_HOME
+	PATH := ${JAVA_HOME}/bin:${PATH}
+	export JAVA_HOME PATH
 endif
 
 export JVM_EXTRA_OPTS

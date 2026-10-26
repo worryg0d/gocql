@@ -1160,7 +1160,7 @@ func TestUDT_EncodeNilMap(t *testing.T) {
 
 	t.Run("encode nil map as initialized UDT with null values / enabled legacy behavior", func(t *testing.T) {
 		session := createSession(t, func(config *ClusterConfig) {
-			config.RegisteredTypes = GlobalTypes.WithNullableUDTs(false)
+			config.RegisteredTypes = GlobalTypes.WithNilMapAsNullUDT(false)
 		})
 		defer session.Close()
 		scanned := insertNilMapAndScan(t, session, 2)
@@ -1169,7 +1169,7 @@ func TestUDT_EncodeNilMap(t *testing.T) {
 
 	t.Run("encode nil map as NULL value / enabled new behavior", func(t *testing.T) {
 		session := createSession(t, func(config *ClusterConfig) {
-			config.RegisteredTypes = GlobalTypes.WithNullableUDTs(true)
+			config.RegisteredTypes = GlobalTypes.WithNilMapAsNullUDT(true)
 		})
 		defer session.Close()
 		scanned := insertNilMapAndScan(t, session, 3)

@@ -622,9 +622,13 @@ func (r *RegisteredTypes) Copy() *RegisteredTypes {
 	return copy
 }
 
-// WithNilMapAsNullUDT creates a shallow copy of the RegisteredTypes with the nullable UDTs flag set to the given value.
+// WithNilMapAsNullUDT creates a shallow copy of the RegisteredTypes with CQL NULL encoding of nil maps for UDT columns.
 //
 // If enabled, a nil map[string]interface{} bound to a UDT is encoded as CQL NULL.
+//
+// IMPORTANT: Rows written with legacy behavior will remain non-NULL, so mixing legacy and new behavior on the same table
+// yields different stored values for the same input.
+//
 // When disabled, UDTs will be encoded as initialized UDT values with all its fields set to NULL when passed map[string]any(nil).
 // For example, there are following UDT and table definitions:
 //
